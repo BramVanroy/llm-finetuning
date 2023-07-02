@@ -22,7 +22,7 @@ https://huggingface.co/models?filter=text-generation
 Adapted by Bram Vanroy for LLM finetuning on instructions
 """
 import dataclasses
-# You can also adapt this script on your own causal language modeling task. Pointers for this are left as comments.
+
 
 import logging
 import math
@@ -100,8 +100,6 @@ def main():
     if hyperopt_args.do_hparams_search:
         logger.error("Hyperparameter search currently not supported by trl. Disabling...")
         hyperopt_args.do_hparams_search = False
-
-    training_args.save_safetensors = True
 
     # Setup logging
     logging.basicConfig(
