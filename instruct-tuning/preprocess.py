@@ -3,7 +3,7 @@ from argparse import Namespace
 from typing import Dict, Union, Literal
 
 import numpy as np
-from datasets import DatasetDict, Dataset
+from datasets import DatasetDict
 import sys
 import os
 
@@ -11,7 +11,6 @@ sys.path.append(os.getcwd())  # noqa
 
 from prompt_templates import format_sample, get_lm_prefix
 
-from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +71,6 @@ def maybe_undersample_datasets(datasets: Union[Dict, DatasetDict], data_args: Na
             train_dataset = train_dataset.select(range(max_train_samples))
 
         logger.info(f"Final TRAIN size: {len(train_dataset):,}")
-        print(f"Final TRAIN size: {len(train_dataset):,}")
 
     eval_dataset = None
     if "validation" in datasets:
@@ -82,6 +80,5 @@ def maybe_undersample_datasets(datasets: Union[Dict, DatasetDict], data_args: Na
             eval_dataset = eval_dataset.select(range(max_eval_samples))
 
         logger.info(f"Final DEV size: {len(eval_dataset):,}")
-        print(f"Final DEV size: {len(eval_dataset):,}")
 
     return train_dataset, eval_dataset
