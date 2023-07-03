@@ -206,6 +206,7 @@ def main():
         model_init=partial(build_model, config, tokenizer, model_args) if hyperopt_args.do_hparams_search else None,
         formatting_func=partial(formatting_prompts_func, template_name=data_args.template_name),
         max_seq_length=data_args.max_seq_length,
+        callbacks=callbacks,
     )
 
     for name, module in trainer.model.named_modules():
