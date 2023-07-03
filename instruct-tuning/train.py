@@ -24,6 +24,7 @@ Adapted by Bram Vanroy for LLM finetuning on instructions
 import dataclasses
 
 import logging
+import sys
 
 # Setup logging
 logging.basicConfig(
@@ -35,7 +36,6 @@ logging.basicConfig(
 
 import math
 import os
-import sys
 from functools import partial
 from json import dump
 from pathlib import Path
