@@ -177,6 +177,8 @@ def main():
                 early_stopping_threshold=hyperopt_args.early_stopping_threshold,
             )
         )
+        logger.info(f"Early stopping enabled (patience: {hyperopt_args.early_stopping_patience};"
+                    f" threshold: {hyperopt_args.early_stopping_threshold})!")
     elif (hyperopt_args.early_stopping_patience is None or hyperopt_args.early_stopping_threshold is None) and not (
         hyperopt_args.early_stopping_patience is None and hyperopt_args.early_stopping_threshold is None
     ):
