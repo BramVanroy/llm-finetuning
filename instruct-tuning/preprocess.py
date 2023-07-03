@@ -42,32 +42,22 @@ def _check_if_response_in_prompt_ids(input_idxs: np.ndarray, response_idxs: np.n
     return False
 
 
-def _find_suitable_samples(dataset: Dataset, tokenizer, data_args: Namespace, dataset_split: str = None):
+def _is_suitable_samples(sample, response_token_ids, tokenizer, max_seq_length: int):
     """Find samples where, even after tokenization and truncation to the max seq length,
     the response prefix is still fully present."""
-    valid_idxs = set()
-
-    response_token_ids = tokenizer(get_lm_prefix(data_args.template_name), add_special_tokens=False, return_tensors="np").input_ids[0]
-    for idx, sample in tqdm(enumerate(dataset),
-                            desc=f"Processing {dataset_split}" if dataset_split else "Processing",
-                            total=len(dataset),
-                            leave=False):
-        prompt = format_sample(**sample)
-        input_ids = tokenizer(prompt, truncation=True, max_length=data_args.max_seq_length, return_tensors="np").input_ids[0]
-
-        if _check_if_response_in_prompt_ids(input_ids, response_token_ids):
-            valid_idxs.add(idx)
-    return valid_idxs
+    prompt = format_sample(**sample)
+    input_ids = tokenizer(prompt, truncation=True, max_length=max_seq_length, return_tensors="np").input_ids[0]
+    return _check_if_response_in_prompt_ids(input_ids, response_token_ids)
 
 
 def filter_on_prefix_present(datasets: Union[Dict, DatasetDict], tokenizer, data_args: Namespace):
-    # Extract samples where the Response prefix is visible, even after truncation
-    preprocessed_dataset = {}
-    for split, ds in datasets.items():
-        idxs = _find_suitable_samples(ds, tokenizer, data_args, split)
-        preprocessed_dataset[split] = datasets[split].select(idxs)
-
-    datasets = DatasetDict(preprocessed_dataset)
+    response_token_ids = tokenizer(get_lm_prefix(data_args.template_name),
+                                   add_special_tokens=False,
+                                   return_tensors="np").input_ids[0]
+    datasets = datasets.filter(lambda sample: _is_suitable_samples(sample,
+                                                                   response_token_ids=response_token_ids,
+                                                                   max_seq_length=data_args.max_seq_length)
+                               )
 
     return datasets
 
