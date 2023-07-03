@@ -23,7 +23,6 @@ Adapted by Bram Vanroy for LLM finetuning on instructions
 """
 import dataclasses
 
-
 import logging
 import math
 import os
@@ -111,6 +110,13 @@ def main():
     if training_args.should_log:
         # The default of training_args.log_level is passive, so we set log level at info here to have that default.
         transformers.utils.logging.set_verbosity_info()
+
+    # Normally, post_init of training_args sets run_name to output_dir (defaults to "results/" in our config file)
+    # But if we overwrite output_dir with a CLI option, then we do not correctly update
+    # run_name to the same value. Which in turn will lead to wandb to use the original "results/" as a run name
+    # see: https://github.com/huggingface/transformers/blob/fe861e578f50dc9c06de33cd361d2f625017e624/src/transformers/integrations.py#L741-L742
+    # Instead we explicitly have to set run_name to the output_dir again
+    training_args.run_name = training_args.output_dir
 
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
