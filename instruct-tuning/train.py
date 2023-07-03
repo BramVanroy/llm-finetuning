@@ -24,6 +24,15 @@ Adapted by Bram Vanroy for LLM finetuning on instructions
 import dataclasses
 
 import logging
+
+# Setup logging
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    datefmt="%m/%d/%Y %H:%M:%S",
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
+)
+
 import math
 import os
 import sys
@@ -99,13 +108,6 @@ def main():
     if hyperopt_args.do_hparams_search:
         logger.error("Hyperparameter search currently not supported by trl. Disabling...")
         hyperopt_args.do_hparams_search = False
-
-    # Setup logging
-    logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-        datefmt="%m/%d/%Y %H:%M:%S",
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
 
     if training_args.should_log:
         # The default of training_args.log_level is passive, so we set log level at info here to have that default.
