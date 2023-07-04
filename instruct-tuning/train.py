@@ -130,9 +130,6 @@ def main():
     if not run_name_specified:
         training_args.run_name = training_args.output_dir
 
-    print(training_args.run_name)
-    print(training_args.output_dir)
-    exit()
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
     datasets.utils.logging.set_verbosity(log_level)
