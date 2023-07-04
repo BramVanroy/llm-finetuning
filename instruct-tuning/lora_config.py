@@ -20,9 +20,10 @@ def _get_target_modules(lora_model_type: Literal["falcon"] = "falcon"):
 
 def build_lora_config(
         lora_model_type: Literal["falcon"] = "falcon",
-        lora_alpha: int = 16,
-        lora_dropout: float = 0.1,
-        lora_r: int = 64
+        lora_alpha: int = 8,
+        lora_dropout: float = 0.0,
+        lora_r: int = 8,
+        task_type: str = "CAUSAL_LM"
 ):
     target_modules = _get_target_modules(lora_model_type)
     return LoraConfig(
@@ -30,6 +31,6 @@ def build_lora_config(
         lora_dropout=lora_dropout,
         r=lora_r,
         bias="none",
-        task_type="CAUSAL_LM",
+        task_type=task_type,
         target_modules=target_modules,
     )
