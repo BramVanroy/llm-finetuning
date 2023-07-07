@@ -126,7 +126,7 @@ class ModelArguments:
             "help": (
                 "The model type, used to figure out which modules to target with LoRA."
             ),
-            "choices": ["falcon"],
+            "choices": ["falcon", "none"],
         },
     )
     lora_alpha: int = field(
@@ -151,6 +151,15 @@ class ModelArguments:
             "help": (
                 "LoRA attention dimension"
             )
+        },
+    )
+    task: str = field(
+        default="instruct",
+        metadata={
+            "help": (
+                "Which to task to train on"
+            ),
+            "choices": ["clm", "instruct"],
         },
     )
 

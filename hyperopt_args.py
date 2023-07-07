@@ -50,3 +50,7 @@ class HyperOptArguments:
         default=None,
         metadata={"help": "Denote how much the evaluation metric must improve to satisfy early stopping conditions."},
     )
+
+    def __post_init__(self):
+        if self.do_hparams_search:
+            raise ValueError("Hyperparameter search is currently not supported because trl does not support it.")

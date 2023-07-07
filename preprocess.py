@@ -7,21 +7,22 @@ from datasets import DatasetDict
 import sys
 import os
 
+from prompt_format import PromptFormatter
+
 sys.path.append(os.getcwd())  # noqa
-
-from prompt_templates import format_sample, get_lm_prefix
-
 
 logger = logging.getLogger(__name__)
 
 
-def formatting_prompts_func(examples, template_name: Literal["alpaca"] = "alpaca"):
+def formatting_prompts_func(examples, prompt_formatter: PromptFormatter):
     output_text = []
     cols = list(examples.keys())
     for idx in range(len(examples[cols[0]])):
         args = {col: examples[col][idx] for col in cols}
-        formatted = format_sample(**args, template_name=template_name)
-        output_text.append(formatted)
+        # TODO: fix messages to expected format of list of dicts where each dict has "role" and "content"
+        messages = []
+        prompt = prompt_formatter.get_training_prompt(messages)
+        output_text.append(prompt)
 
     return output_text
 
@@ -41,18 +42,18 @@ def _check_if_response_in_prompt_ids(input_idxs: np.ndarray, response_idxs: np.n
     return False
 
 
-def _is_suitable_samples(sample, response_token_ids, tokenizer, max_seq_length: int):
+def _is_suitable_samples(sample, response_token_ids, prompt_formatter: PromptFormatter, tokenizer, max_seq_length: int):
     """Find samples where, even after tokenization and truncation to the max seq length,
     the response prefix is still fully present."""
-    prompt = format_sample(**sample)
+    # TODO: convert sample to messages to expected format of list of dicts where each dict has "role" and "content"
+    messages = []
+    prompt = prompt_formatter.get_training_prompt(messages)
     input_ids = tokenizer(prompt, truncation=True, max_length=max_seq_length, return_tensors="np").input_ids[0]
     return _check_if_response_in_prompt_ids(input_ids, response_token_ids)
 
 
-def filter_on_prefix_present(datasets: Union[Dict, DatasetDict], tokenizer, data_args: Namespace):
-    response_token_ids = tokenizer(get_lm_prefix(data_args.template_name),
-                                   add_special_tokens=False,
-                                   return_tensors="np").input_ids[0]
+def filter_on_prefix_present(datasets: Union[Dict, DatasetDict], prompt_formatter: PromptFormatter, tokenizer, data_args: Namespace):
+    response_token_ids = prompt_formatter.assistant_token_ids(tokenizer)
     datasets = datasets.filter(lambda sample: _is_suitable_samples(sample,
                                                                    response_token_ids=response_token_ids,
                                                                    tokenizer=tokenizer,

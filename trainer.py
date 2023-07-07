@@ -275,10 +275,8 @@ class SFTTrainer(Trainer):
             outputs = tokenizer(
                 batch[dataset_text_field] if not use_formatting_func else formatting_func(batch),
                 truncation=True,
-                padding=True,
                 max_length=max_seq_len,
                 return_overflowing_tokens=False,
-                return_length=True,
             )
 
             if use_formatting_func and not self._dataset_sanity_checked:

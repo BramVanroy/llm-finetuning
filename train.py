@@ -26,6 +26,15 @@ import json
 
 import logging
 import sys
+from itertools import chain
+
+import evaluate
+from peft import PeftConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
+from transformers.testing_utils import CaptureLogger
+from transformers.utils import is_peft_available
+from trl.trainer.utils import PeftSavingCallback
+
+from collator import DataCollatorForTurnBasedLM
 
 # Setup logging
 logging.basicConfig(
@@ -41,14 +50,14 @@ from functools import partial
 from json import dump
 from pathlib import Path
 
+sys.path.append(os.getcwd())  # noqa
+
 from data import build_data
 from hyperopt import wandb_hp_space
 from hyperopt_args import HyperOptArguments
 from lora_config import build_lora_config
 from preprocess import formatting_prompts_func, filter_on_prefix_present, maybe_undersample_datasets
-from prompt_templates import get_lm_prefix
-
-sys.path.append(os.getcwd())  # noqa
+from prompt_format import get_prompt_formatter
 
 from config import build_config
 from model import build_model
@@ -66,11 +75,10 @@ from transformers import (
     EarlyStoppingCallback,
     HfArgumentParser,
     TrainingArguments,
-    set_seed
+    set_seed, default_data_collator, Trainer, is_torch_tpu_available, PreTrainedModel, AutoModelForCausalLM
 )
 
 from transformers.trainer_utils import get_last_checkpoint
-from trl import DataCollatorForCompletionOnlyLM
 
 logger = logging.getLogger(__name__)
 
@@ -113,10 +121,6 @@ def main():
     else:
         model_args, data_args, training_args, hyperopt_args = parser.parse_args_into_dataclasses()
 
-    if hyperopt_args.do_hparams_search:
-        logger.error("Hyperparameter search currently not supported by trl. Disabling...")
-        hyperopt_args.do_hparams_search = False
-
     if training_args.should_log:
         # The default of training_args.log_level is passive, so we set log level at info here to have that default.
         transformers.utils.logging.set_verbosity_info()
@@ -144,6 +148,8 @@ def main():
     )
     logger.info(f"Training/evaluation parameters {training_args}")
 
+    prompt_formatter = get_prompt_formatter(data_args.template_name) if model_args.task == "instruct" else None
+
     # Detecting last checkpoint.
     last_checkpoint = None
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
@@ -164,29 +170,144 @@ def main():
 
     config = build_config(model_args)
     tokenizer = build_tokenizer(model_args)
-    model = build_model(config, tokenizer, model_args) if not hyperopt_args.do_hparams_search else None
+    model = build_model(config, tokenizer, model_args)
+
+    peft_config = build_lora_config(
+        model_args.lora_model_type,
+        lora_alpha=model_args.lora_alpha,
+        lora_dropout=model_args.lora_dropout,
+        lora_r=model_args.lora_r
+    ) if model_args.lora_model_type != "none" else None
+
+    callbacks = []
+    if is_peft_available() and peft_config is not None:
+        if not isinstance(peft_config, PeftConfig):
+            raise ValueError(
+                "If you want to use the PeftModel, you need to pass a PeftConfig object to the SFTTrainer."
+                f" and you passed a {type(peft_config)}."
+            )
+
+        if not isinstance(model, PeftModel):
+            if not isinstance(model, PreTrainedModel):
+                model = AutoModelForCausalLM.from_pretrained(
+                    model,
+                )
+
+            if getattr(model, "is_loaded_in_8bit", False) or getattr(model, "is_loaded_in_4bit", False):
+                model = prepare_model_for_kbit_training(model)
+
+            model = get_peft_model(model, peft_config)
+
+        callbacks.append(PeftSavingCallback)
 
     loaded_datasets = build_data(data_args, model_args)
-    loaded_datasets = filter_on_prefix_present(loaded_datasets, tokenizer, data_args)
+
+    if model_args.task == "instruct":
+        loaded_datasets = filter_on_prefix_present(loaded_datasets, tokenizer, data_args)
+    elif model_args.task == "clm":
+        if training_args.do_train:
+            column_names = list(loaded_datasets["train"].features)
+        else:
+            column_names = list(loaded_datasets["validation"].features)
+        text_column_name = "text" if "text" in column_names else column_names[0]
+
+        # since this will be pickled to avoid _LazyModule error in Hasher force logger loading before tokenize_function
+        tok_logger = transformers.utils.logging.get_logger("transformers.tokenization_utils_base")
+
+        def tokenize_function(examples):
+            with CaptureLogger(tok_logger) as cl:
+                output = tokenizer(examples[text_column_name])
+            # clm input could be much much longer than block_size
+            if "Token indices sequence length is longer than the" in cl.out:
+                tok_logger.warning(
+                    "^^^^^^^^^^^^^^^^ Please ignore the warning above - this long input will be chunked into smaller bits"
+                    " before being passed to the model."
+                )
+            return output
+
+        with training_args.main_process_first(desc="dataset map tokenization"):
+            if not data_args.streaming:
+                loaded_datasets = loaded_datasets.map(
+                    tokenize_function,
+                    batched=True,
+                    num_proc=data_args.preprocessing_num_workers,
+                    remove_columns=column_names,
+                    load_from_cache_file=not data_args.overwrite_cache,
+                    desc="Running tokenizer on dataset",
+                )
+            else:
+                loaded_datasets = loaded_datasets.map(
+                    tokenize_function,
+                    batched=True,
+                    remove_columns=column_names,
+                )
+        if data_args.block_size is None:
+            block_size = tokenizer.model_max_length
+            if block_size > 1024:
+                logger.warning(
+                    "The chosen tokenizer supports a `model_max_length` that is longer than the default `block_size` value"
+                    " of 1024. If you would like to use a longer `block_size` up to `tokenizer.model_max_length` you can"
+                    " override this default with `--block_size xxx`."
+                )
+                block_size = 1024
+        else:
+            if data_args.block_size > tokenizer.model_max_length:
+                logger.warning(
+                    f"The block_size passed ({data_args.block_size}) is larger than the maximum length for the model"
+                    f"({tokenizer.model_max_length}). Using block_size={tokenizer.model_max_length}."
+                )
+            block_size = min(data_args.block_size, tokenizer.model_max_length)
+
+        # Main data processing function that will concatenate all texts from our dataset and generate chunks of block_size.
+        def group_texts(examples):
+            # Concatenate all texts.
+            concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+            total_length = len(concatenated_examples[list(examples.keys())[0]])
+            # We drop the small remainder, and if the total_length < block_size  we exclude this batch and return an empty dict.
+            # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
+            total_length = (total_length // block_size) * block_size
+            # Split by chunks of max_len.
+            result = {
+                k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
+                for k, t in concatenated_examples.items()
+            }
+            result["labels"] = result["input_ids"].copy()
+            return result
+
+        # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a remainder
+        # for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value might be slower
+        # to preprocess.
+        #
+        # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
+        # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
+        with training_args.main_process_first(desc="grouping texts together"):
+            if not data_args.streaming:
+                loaded_datasets = loaded_datasets.map(
+                    group_texts,
+                    batched=True,
+                    num_proc=data_args.preprocessing_num_workers,
+                    load_from_cache_file=not data_args.overwrite_cache,
+                    desc=f"Grouping texts in chunks of {block_size}",
+                )
+            else:
+                loaded_datasets = loaded_datasets.map(
+                    group_texts,
+                    batched=True,
+                )
+
     train_dataset, eval_dataset = maybe_undersample_datasets(loaded_datasets, data_args)
 
     del loaded_datasets
 
-    if training_args.do_train or hyperopt_args.do_hparams_search:
-        if train_dataset is None:
-            raise ValueError("--do_train and --do_hparams_search require a train dataset")
-    elif training_args.do_eval or hyperopt_args.do_hparams_search:
-        if eval_dataset is None:
-            raise ValueError("--do_eval and --do_hparams_search require a validation dataset. If your dataset does"
-                             " not have a dedicate validation set, and you did not specify an explicit"
-                             " validation_file, and you also did not specify --do_train (so that a portion of"
-                             " the training set could be used) then this error may occur.")
-    elif not hyperopt_args.do_hparams_search:
-        logger.info(
-            "There is nothing to do. Please pass `do_train`, `do_eval`, and/or 'do_hparams_search'.")
-        return
+    if training_args.do_train and train_dataset is None:
+        raise ValueError("--do_train requires a train dataset")
+    elif training_args.do_eval and eval_dataset is None:
+        raise ValueError("--do_eval requires a validation dataset. If your dataset does"
+                         " not have a dedicate validation set, and you did not specify an explicit"
+                         " validation_file, and you also did not specify --do_train (so that a portion of"
+                         " the training set could be used) then this error may occur.")
 
-    callbacks = []
+
     # If you want to use early stopping, both arguments have to be specified. Throw error if just one is specified.
     if hyperopt_args.early_stopping_patience is not None and hyperopt_args.early_stopping_threshold is not None:
         callbacks.append(
@@ -198,61 +319,66 @@ def main():
         logger.info(f"Early stopping enabled (patience: {hyperopt_args.early_stopping_patience};"
                     f" threshold: {hyperopt_args.early_stopping_threshold})!")
     elif (hyperopt_args.early_stopping_patience is None or hyperopt_args.early_stopping_threshold is None) and not (
-        hyperopt_args.early_stopping_patience is None and hyperopt_args.early_stopping_threshold is None
+            hyperopt_args.early_stopping_patience is None and hyperopt_args.early_stopping_threshold is None
     ):
         raise ValueError(
             "Both 'early_stopping_patience' and 'early_stopping_threshold' must be given, or none of them."
             " If none are given, early stopping will not be used."
         )
 
-    peft_config = build_lora_config(
-        model_args.lora_model_type,
-        lora_alpha=model_args.lora_alpha,
-        lora_dropout=model_args.lora_dropout,
-        lora_r=model_args.lora_r
-    )
+    def preprocess_logits_for_metrics(logits, labels):
+        if isinstance(logits, tuple):
+            # Depending on the model and config, logits may contain extra tensors,
+            # like past_key_values, but logits always come first
+            logits = logits[0]
+        return logits.argmax(dim=-1)
 
-    collator = DataCollatorForCompletionOnlyLM(get_lm_prefix(data_args.template_name), tokenizer, mlm=False)
+    metric = evaluate.load("accuracy")
 
-    # Initialize our Trainer
-    trainer = SFTTrainer(
-        model=model,
-        args=training_args,
-        peft_config=peft_config,
-        train_dataset=train_dataset if training_args.do_train or hyperopt_args.do_hparams_search else None,
-        eval_dataset=eval_dataset if training_args.do_eval or hyperopt_args.do_hparams_search else None,
-        tokenizer=tokenizer,
-        data_collator=collator,
-        model_init=partial(build_model, config, tokenizer, model_args) if hyperopt_args.do_hparams_search else None,
-        formatting_func=partial(formatting_prompts_func, template_name=data_args.template_name),
-        max_seq_length=data_args.max_seq_length,
-        callbacks=callbacks,
-    )
+    def compute_metrics(eval_preds):
+        preds, labels = eval_preds
+        # preds have the same shape as the labels, after the argmax(-1) has been calculated
+        # by preprocess_logits_for_metrics but we need to shift the labels
+        labels = labels[:, 1:].reshape(-1)
+        preds = preds[:, :-1].reshape(-1)
+        return metric.compute(predictions=preds, references=labels)
+
+    if model_args.task == "instruct":
+        collator = DataCollatorForTurnBasedLM(prompt_formatter.user_token,
+                                              prompt_formatter.assistant_token,
+                                              tokenizer=tokenizer,
+                                              mlm=False)
+        trainer = SFTTrainer(
+            model=model,
+            args=training_args,
+            peft_config=peft_config,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            data_collator=collator,
+            formatting_func=partial(formatting_prompts_func, template_name=data_args.template_name),
+            max_seq_length=data_args.max_seq_length,
+            callbacks=callbacks,
+        )
+    else:
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset if training_args.do_train else None,
+            eval_dataset=eval_dataset if training_args.do_eval else None,
+            tokenizer=tokenizer,
+            # Data collator will default to DataCollatorWithPadding, so we change it.
+            data_collator=default_data_collator,
+            compute_metrics=compute_metrics if training_args.do_eval and not is_torch_tpu_available() else None,
+            preprocess_logits_for_metrics=preprocess_logits_for_metrics
+            if training_args.do_eval and not is_torch_tpu_available()
+            else None,
+            callbacks=callbacks,
+        )
 
     for name, module in trainer.model.named_modules():
         if "norm" in name:
             module = module.to(torch.float32)
-
-    if hyperopt_args.do_hparams_search:
-        best_trial = trainer.hyperparameter_search(
-            backend="wandb",
-            hp_space=partial(wandb_hp_space, hyperopt_args=hyperopt_args),
-            n_trials=hyperopt_args.hparam_max_trials,
-        )
-
-        logging.info(f"Best hyperparameter search run: {best_trial.run_id}")
-        with Path(training_args.output_dir).joinpath("wandb_best_hparams.json").open("w", encoding="utf-8") as hp_out:
-            best_trial.hyperparameters.pop("assignments", None)
-            best_trial.hyperparameters["metric"] = "eval/loss"
-            hparams_dump = {
-                **best_trial.hyperparameters,
-                "best_run": best_trial.run_id,
-                "objective": best_trial.objective
-            }
-            dump(hparams_dump, hp_out, indent=4, sort_keys=True)
-
-        for hparam, v in best_trial.hyperparameters.items():
-            setattr(trainer.args, hparam, v)
 
     # Training
     if training_args.do_train:

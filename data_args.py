@@ -40,6 +40,16 @@ class DataTrainingArguments:
         },
     )
     streaming: bool = field(default=False, metadata={"help": "Enable streaming mode"})
+    block_size: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": (
+                "Optional input sequence length after tokenization. "
+                "The training dataset will be truncated in block of this size for training. "
+                "Default to the model max input length for single sentence inputs (take into account special tokens)."
+            )
+        },
+    )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
@@ -60,7 +70,7 @@ class DataTrainingArguments:
         default=512,
         metadata={
             "help": (
-                "Maximal length for sequences before they are truncated."
+                "Maximal length for sequences before they are truncated when instruct tuning."
             )
         },
     )
@@ -68,7 +78,7 @@ class DataTrainingArguments:
         default="alpaca",
         metadata={
             "help": (
-                "Prompting template to use (cf. `prompt_templates`)."
+                "Prompting template to use (cf. `prompt_formatter`)."
             ),
             "choices": ["alpaca"],
         },
