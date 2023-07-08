@@ -71,7 +71,8 @@ def maybe_undersample_datasets(datasets: Union[Dict, DatasetDict], data_args: Na
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
 
-        logger.info(f"Final TRAIN size: {len(train_dataset):,}")
+        if hasattr(train_dataset, "__len__"):  # False for streaming=True datasets
+            logger.info(f"Final TRAIN size: {len(train_dataset):,}")
 
     eval_dataset = None
     if "validation" in datasets:
@@ -80,6 +81,7 @@ def maybe_undersample_datasets(datasets: Union[Dict, DatasetDict], data_args: Na
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
             eval_dataset = eval_dataset.select(range(max_eval_samples))
 
-        logger.info(f"Final DEV size: {len(eval_dataset):,}")
+        if hasattr(eval_dataset, "__len__"):
+            logger.info(f"Final DEV size: {len(eval_dataset):,}")
 
     return train_dataset, eval_dataset
