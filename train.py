@@ -123,9 +123,6 @@ def main():
         # The default of training_args.log_level is passive, so we set log level at info here to have that default.
         transformers.utils.logging.set_verbosity_info()
 
-    print(data_args)
-    exit()
-
     # Normally, post_init of training_args sets run_name to output_dir (defaults to "results/" in our config file)
     # But if we overwrite output_dir with a CLI option, then we do not correctly update
     # run_name to the same value. Which in turn will lead to wandb to use the original "results/" as a run name
