@@ -47,13 +47,11 @@ logging.basicConfig(
 import math
 import os
 from functools import partial
-from json import dump
 from pathlib import Path
 
 sys.path.append(os.getcwd())  # noqa
 
 from data import build_data
-from hyperopt import wandb_hp_space
 from hyperopt_args import HyperOptArguments
 from lora_config import build_lora_config
 from preprocess import formatting_prompts_func, filter_on_prefix_present, maybe_undersample_datasets
@@ -124,6 +122,9 @@ def main():
     if training_args.should_log:
         # The default of training_args.log_level is passive, so we set log level at info here to have that default.
         transformers.utils.logging.set_verbosity_info()
+
+    print(data_args)
+    exit()
 
     # Normally, post_init of training_args sets run_name to output_dir (defaults to "results/" in our config file)
     # But if we overwrite output_dir with a CLI option, then we do not correctly update

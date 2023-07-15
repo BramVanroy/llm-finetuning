@@ -59,6 +59,12 @@ class DataTrainingArguments:
             "help": "The percentage of the train set used as validation set in case there's no validation split"
         },
     )
+    use_presplit_validation: bool = field(
+        default=True,
+        metadata={"help": "Whether to look for and use a 'validation' split in the given HF dataset. If"
+                          " disabled, will use 'validation_split_percentage' to turn a portion of"
+                          " the training set into a validation set"}
+    )
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},

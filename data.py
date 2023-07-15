@@ -13,7 +13,7 @@ def build_data(data_args: Namespace, model_args: Namespace):
             use_auth_token=True if model_args.use_auth_token else None,
             streaming=data_args.streaming,
         )
-        if "validation" not in raw_datasets.keys():
+        if "validation" not in raw_datasets.keys() or not data_args.use_presplit_validation:
             raw_datasets["validation"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,
@@ -53,7 +53,7 @@ def build_data(data_args: Namespace, model_args: Namespace):
             **dataset_args,
         )
         # If no validation data is there, validation_split_percentage will be used to divide the dataset.
-        if "validation" not in raw_datasets.keys():
+        if "validation" not in raw_datasets.keys() or not data_args.use_presplit_validation:
             raw_datasets["validation"] = load_dataset(
                 extension,
                 data_files=data_files,
