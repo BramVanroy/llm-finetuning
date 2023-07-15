@@ -25,6 +25,7 @@ import dataclasses
 import json
 
 import logging
+import re
 import sys
 from itertools import chain
 
@@ -112,8 +113,11 @@ def main():
         cli_args = parser.parse_args_into_dataclasses(args=cli_args, look_for_args_file=False)
 
         all_args = []
+
         for cfg_dc, cli_dc in zip(config_args, cli_args):
-            cli_d = {k: v for k, v in dataclasses.asdict(cli_dc).items() if k in arg_names}
+            # Have to check explicitly for no_ for the automatically added negated boolean arguments
+            # E.g. find_unused... vs no_find_unused...
+            cli_d = {k: v for k, v in dataclasses.asdict(cli_dc).items() if k in arg_names or f"no_{k}" in arg_names}
             all_args.append(dataclasses.replace(cfg_dc, **cli_d))
         model_args, data_args, training_args, hyperopt_args = all_args
     else:
@@ -131,6 +135,11 @@ def main():
     # did not specifically specify run_name in the config or in the CLI
     if not run_name_specified:
         training_args.run_name = training_args.output_dir
+
+    if training_args.do_eval and data_args.streaming and not data_args.use_presplit_validation:
+        raise ValueError("When using 'streaming=True' it is not possible to automatically generate a split from the"
+                         " training set. This is not supported by 'datasets'. Specify a validation set, disable"
+                         " streaming, or enable 'use_presplit_validation'")
 
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
@@ -295,8 +304,6 @@ def main():
 
     train_dataset, eval_dataset = maybe_undersample_datasets(loaded_datasets, data_args)
 
-    del loaded_datasets
-
     if training_args.do_train and train_dataset is None:
         raise ValueError("--do_train requires a train dataset")
     elif training_args.do_eval and eval_dataset is None:
@@ -304,7 +311,6 @@ def main():
                          " not have a dedicate validation set, and you did not specify an explicit"
                          " validation_file, and you also did not specify --do_train (so that a portion of"
                          " the training set could be used) then this error may occur.")
-
 
     # If you want to use early stopping, both arguments have to be specified. Throw error if just one is specified.
     if hyperopt_args.early_stopping_patience is not None and hyperopt_args.early_stopping_threshold is not None:
