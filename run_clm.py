@@ -49,7 +49,7 @@ from transformers import (
     TrainingArguments,
     default_data_collator,
     is_torch_tpu_available,
-    set_seed,
+    set_seed, EarlyStoppingCallback,
 )
 from transformers.testing_utils import CaptureLogger
 from transformers.trainer_utils import get_last_checkpoint
@@ -139,6 +139,14 @@ class ModelArguments:
             )
         },
     )
+    trust_remote_code: bool = field(
+        default=False,
+        metadata={
+            "help": (
+                "Whether to trust the code that may be downloaded alongside some models. This may be necessary to run models like Falcon who are not fully integrated in `transformers` yet."
+            )
+        },
+    )
 
     def __post_init__(self):
         if self.config_overrides is not None and (self.config_name is not None or self.model_name_or_path is not None):
@@ -214,6 +222,17 @@ class DataTrainingArguments:
     )
     keep_linebreaks: bool = field(
         default=True, metadata={"help": "Whether to keep line breaks when using TXT files or not."}
+    )
+    early_stopping_patience: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Stop training when the evaluation metric worsens (instead of improves) for"
+            " early_stopping_patience evaluation calls."
+        },
+    )
+    early_stopping_threshold: Optional[float] = field(
+        default=None,
+        metadata={"help": "Denote how much the evaluation metric must improve to satisfy early stopping conditions."},
     )
 
     def __post_init__(self):
@@ -423,6 +442,7 @@ def main():
         "cache_dir": model_args.cache_dir,
         "revision": model_args.model_revision,
         "use_auth_token": True if model_args.use_auth_token else None,
+        "trust_remote_code": model_args.trust_remote_code
     }
     if model_args.config_name:
         config = AutoConfig.from_pretrained(model_args.config_name, **config_kwargs)
@@ -441,6 +461,7 @@ def main():
         "use_fast": model_args.use_fast_tokenizer,
         "revision": model_args.model_revision,
         "use_auth_token": True if model_args.use_auth_token else None,
+        "trust_remote_code": model_args.trust_remote_code
     }
     if model_args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
@@ -467,6 +488,7 @@ def main():
             use_auth_token=True if model_args.use_auth_token else None,
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=model_args.low_cpu_mem_usage,
+            trust_remote_code=model_args.trust_remote_code
         )
     else:
         model = AutoModelForCausalLM.from_config(config)
@@ -606,6 +628,25 @@ def main():
             preds = preds[:, :-1].reshape(-1)
             return metric.compute(predictions=preds, references=labels)
 
+    callbacks = []
+    # If you want to use early stopping, both arguments have to be specified. Throw error if just one is specified.
+    if hyperopt_args.early_stopping_patience is not None and hyperopt_args.early_stopping_threshold is not None:
+        callbacks.append(
+            EarlyStoppingCallback(
+                early_stopping_patience=hyperopt_args.early_stopping_patience,
+                early_stopping_threshold=hyperopt_args.early_stopping_threshold,
+            )
+        )
+        logger.info(f"Early stopping enabled (patience: {hyperopt_args.early_stopping_patience};"
+                    f" threshold: {hyperopt_args.early_stopping_threshold})!")
+    elif (hyperopt_args.early_stopping_patience is None or hyperopt_args.early_stopping_threshold is None) and not (
+            hyperopt_args.early_stopping_patience is None and hyperopt_args.early_stopping_threshold is None
+    ):
+        raise ValueError(
+            "Both 'early_stopping_patience' and 'early_stopping_threshold' must be given, or none of them."
+            " If none are given, early stopping will not be used."
+        )
+
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -619,6 +660,7 @@ def main():
         preprocess_logits_for_metrics=preprocess_logits_for_metrics
         if training_args.do_eval and not is_torch_tpu_available()
         else None,
+        callbacks=callbacks
     )
 
     # Training
