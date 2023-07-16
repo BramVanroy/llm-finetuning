@@ -123,10 +123,6 @@ def main():
     else:
         model_args, data_args, training_args, hyperopt_args = parser.parse_args_into_dataclasses()
 
-    if training_args.should_log:
-        # The default of training_args.log_level is passive, so we set log level at info here to have that default.
-        transformers.utils.logging.set_verbosity_info()
-
     # Normally, post_init of training_args sets run_name to output_dir (defaults to "results/" in our config file)
     # But if we overwrite output_dir with a CLI option, then we do not correctly update
     # run_name to the same value. Which in turn will lead to wandb to use the original "results/" as a run name
@@ -140,6 +136,10 @@ def main():
         raise ValueError("When using 'streaming=True' it is not possible to automatically generate a split from the"
                          " training set. This is not supported by 'datasets'. Specify a validation set, disable"
                          " streaming, or enable 'use_presplit_validation'")
+
+    if training_args.should_log:
+        # The default of training_args.log_level is passive, so we set log level at info here to have that default.
+        transformers.utils.logging.set_verbosity_info()
 
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
