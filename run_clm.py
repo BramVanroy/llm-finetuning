@@ -273,9 +273,9 @@ def main():
             # E.g. find_unused... vs no_find_unused...
             cli_d = {k: v for k, v in dataclasses.asdict(cli_dc).items() if k in arg_names or f"no_{k}" in arg_names}
             all_args.append(dataclasses.replace(cfg_dc, **cli_d))
-        model_args, data_args, training_args, hyperopt_args = all_args
+        model_args, data_args, training_args = all_args
     else:
-        model_args, data_args, training_args, hyperopt_args = parser.parse_args_into_dataclasses()
+        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     # Normally, post_init of training_args sets run_name to output_dir (defaults to "results/" in our config file)
     # But if we overwrite output_dir with a CLI option, then we do not correctly update
@@ -616,17 +616,17 @@ def main():
 
     callbacks = []
     # If you want to use early stopping, both arguments have to be specified. Throw error if just one is specified.
-    if hyperopt_args.early_stopping_patience is not None and hyperopt_args.early_stopping_threshold is not None:
+    if data_args.early_stopping_patience is not None and data_args.early_stopping_threshold is not None:
         callbacks.append(
             EarlyStoppingCallback(
-                early_stopping_patience=hyperopt_args.early_stopping_patience,
-                early_stopping_threshold=hyperopt_args.early_stopping_threshold,
+                early_stopping_patience=data_args.early_stopping_patience,
+                early_stopping_threshold=data_args.early_stopping_threshold,
             )
         )
-        logger.info(f"Early stopping enabled (patience: {hyperopt_args.early_stopping_patience};"
-                    f" threshold: {hyperopt_args.early_stopping_threshold})!")
-    elif (hyperopt_args.early_stopping_patience is None or hyperopt_args.early_stopping_threshold is None) and not (
-            hyperopt_args.early_stopping_patience is None and hyperopt_args.early_stopping_threshold is None
+        logger.info(f"Early stopping enabled (patience: {data_args.early_stopping_patience};"
+                    f" threshold: {data_args.early_stopping_threshold})!")
+    elif (data_args.early_stopping_patience is None or data_args.early_stopping_threshold is None) and not (
+            data_args.early_stopping_patience is None and data_args.early_stopping_threshold is None
     ):
         raise ValueError(
             "Both 'early_stopping_patience' and 'early_stopping_threshold' must be given, or none of them."
