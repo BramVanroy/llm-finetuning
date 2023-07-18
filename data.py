@@ -13,7 +13,7 @@ def build_data(data_args: Namespace, model_args: Namespace):
             cache_dir=model_args.cache_dir,
             use_auth_token=True if model_args.use_auth_token else None,
             streaming=data_args.streaming,
-            num_proc=8 if os.name != "nt" else None,
+            num_proc=data_args.preprocessing_num_workers,
         )
         if "validation" not in raw_datasets.keys() or not data_args.use_presplit_validation:
             if data_args.streaming:
@@ -28,7 +28,7 @@ def build_data(data_args: Namespace, model_args: Namespace):
                 cache_dir=model_args.cache_dir,
                 use_auth_token=True if model_args.use_auth_token else None,
                 streaming=data_args.streaming,
-                num_proc=8 if os.name != "nt" else None,
+                num_proc=data_args.preprocessing_num_workers,
             )
             raw_datasets["train"] = load_dataset(
                 data_args.dataset_name,
@@ -37,7 +37,7 @@ def build_data(data_args: Namespace, model_args: Namespace):
                 cache_dir=model_args.cache_dir,
                 use_auth_token=True if model_args.use_auth_token else None,
                 streaming=data_args.streaming,
-                num_proc=8 if os.name != "nt" else None,
+                num_proc=data_args.preprocessing_num_workers,
             )
     else:
         data_files = {}
@@ -59,7 +59,7 @@ def build_data(data_args: Namespace, model_args: Namespace):
             data_files=data_files,
             cache_dir=model_args.cache_dir,
             use_auth_token=True if model_args.use_auth_token else None,
-            num_proc=8 if os.name != "nt" else None,
+            num_proc=data_args.preprocessing_num_workers,
             **dataset_args,
         )
         # If no validation data is there, validation_split_percentage will be used to divide the dataset.
@@ -70,7 +70,7 @@ def build_data(data_args: Namespace, model_args: Namespace):
                 split=f"train[:{data_args.validation_split_percentage}%]",
                 cache_dir=model_args.cache_dir,
                 use_auth_token=True if model_args.use_auth_token else None,
-                num_proc=8 if os.name != "nt" else None,
+                num_proc=data_args.preprocessing_num_workers,
                 **dataset_args,
             )
             raw_datasets["train"] = load_dataset(
@@ -79,7 +79,7 @@ def build_data(data_args: Namespace, model_args: Namespace):
                 split=f"train[{data_args.validation_split_percentage}%:]",
                 cache_dir=model_args.cache_dir,
                 use_auth_token=True if model_args.use_auth_token else None,
-                num_proc=8 if os.name != "nt" else None,
+                num_proc=data_args.preprocessing_num_workers,
                 **dataset_args,
             )
 
