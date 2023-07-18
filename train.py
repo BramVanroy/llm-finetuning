@@ -210,7 +210,7 @@ def main():
     loaded_datasets = build_data(data_args, model_args)
 
     if model_args.task == "instruct":
-        loaded_datasets = filter_on_prefix_present(loaded_datasets, tokenizer, data_args)
+        loaded_datasets = filter_on_prefix_present(loaded_datasets, prompt_formatter, tokenizer, data_args)
     elif model_args.task == "clm":
         if training_args.do_train:
             column_names = list(loaded_datasets["train"].features)

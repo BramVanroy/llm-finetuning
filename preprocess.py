@@ -56,8 +56,10 @@ def filter_on_prefix_present(datasets: Union[Dict, DatasetDict], prompt_formatte
     response_token_ids = prompt_formatter.assistant_token_ids(tokenizer)
     datasets = datasets.filter(lambda sample: _is_suitable_samples(sample,
                                                                    response_token_ids=response_token_ids,
+                                                                   prompt_formatter=prompt_formatter,
                                                                    tokenizer=tokenizer,
-                                                                   max_seq_length=data_args.max_seq_length)
+                                                                   max_seq_length=data_args.max_seq_length),
+                               num_proc=data_args.preprocessing_num_workers,
                                )
 
     return datasets
