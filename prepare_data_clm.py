@@ -128,15 +128,15 @@ def main():
     set_seed(data_args.seed)
 
     # Downloading and loading a dataset from the hub.
-    raw_datasets = load_dataset(
+    proc_datasets = load_dataset(
         data_args.dataset_name,
         data_args.dataset_config_name,
         cache_dir=tok_args.cache_dir,
         use_auth_token=True if tok_args.use_auth_token else None,
         num_proc=data_args.preprocessing_num_workers,
     )
-    if "validation" not in raw_datasets.keys() or not data_args.use_presplit_validation:
-        raw_datasets["validation"] = load_dataset(
+    if "validation" not in proc_datasets.keys() or not data_args.use_presplit_validation:
+        proc_datasets["validation"] = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
             split=f"train[:{data_args.validation_split_percentage}%]",
@@ -144,7 +144,7 @@ def main():
             use_auth_token=True if tok_args.use_auth_token else None,
             num_proc=data_args.preprocessing_num_workers,
         )
-        raw_datasets["train"] = load_dataset(
+        proc_datasets["train"] = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
             split=f"train[{data_args.validation_split_percentage}%:]",
@@ -179,10 +179,10 @@ def main():
         return {"input_ids": outputs["input_ids"], "attention_mask": outputs["attention_mask"]}
 
     # Process datasets so that they are cached and we can use them later on in the training scripts
-    tokenized_datasets = raw_datasets.map(
+    proc_datasets = proc_datasets.map(
         tokenize,
         batched=True,
-        remove_columns=raw_datasets["train"].column_names,
+        remove_columns=proc_datasets["train"].column_names,
         num_proc=data_args.preprocessing_num_workers,
         batch_size=data_args.batch_size,
         desc="Running tokenizer on datasets",
@@ -208,7 +208,7 @@ def main():
 
     logger.info("You can ignore the 'length is longer than...' errors because we will chunk the texts into"
                 " 'block_size' sized blocks later")
-    tokenized_datasets = tokenized_datasets.map(
+    proc_datasets = proc_datasets.map(
         group_texts,
         batched=True,
         num_proc=data_args.preprocessing_num_workers,
@@ -220,11 +220,12 @@ def main():
     dataset_name_cfg = f"{data_args.dataset_name.split('/')[-1]}--{data_args.dataset_config_name}"
     output_dir = Path(data_args.output_dir) / f"{dataset_name_cfg}-{tok_args.tokenizer_name.split('/')[-1]}-{data_args.block_size}"
     output_dir.mkdir(exist_ok=True, parents=True)
-    tokenized_datasets.save_to_disk(output_dir)
+    proc_datasets.save_to_disk(output_dir)
 
     logger.info(f"Dataset saved to {str(output_dir)}")
-    logger.info(str(tokenized_datasets))
+    logger.info(str(proc_datasets))
 
 
 if __name__ == "__main__":
     main()
+
