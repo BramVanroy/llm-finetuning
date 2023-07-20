@@ -1,9 +1,11 @@
 import logging
 import sys
 from dataclasses import dataclass, field
+from itertools import chain
+from pathlib import Path
 from typing import Optional
 
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict
 
 from transformers import (
     AutoTokenizer,
@@ -58,18 +60,20 @@ class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
-    dataset_name: Optional[str] = field(
-        default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
+    output_dir: str = field(
+        metadata={"help": "The dataset will be saved under output directory so that it can be"
+                          " loaded directly from disk without relying on cache."}
+    )
+    dataset_name: str = field(
+        metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
-    train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
-    validation_file: Optional[str] = field(
-        default=None,
-        metadata={"help": "An optional input evaluation data file to evaluate the perplexity on (a text file)."},
+    text_column_name: Optional[str] = field(
+        default="text",
+        metadata={"help": "Text column to tokenize."}
     )
-    streaming: bool = field(default=False, metadata={"help": "Enable streaming mode"})
     block_size: Optional[int] = field(
         default=None,
         metadata={
@@ -117,88 +121,37 @@ def main():
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
+        level=logging.INFO
     )
 
     # Set seed before initializing model.
     set_seed(data_args.seed)
 
-    if data_args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        raw_datasets = load_dataset(
+    # Downloading and loading a dataset from the hub.
+    raw_datasets = load_dataset(
+        data_args.dataset_name,
+        data_args.dataset_config_name,
+        cache_dir=tok_args.cache_dir,
+        use_auth_token=True if tok_args.use_auth_token else None,
+        num_proc=data_args.preprocessing_num_workers,
+    )
+    if "validation" not in raw_datasets.keys() or not data_args.use_presplit_validation:
+        raw_datasets["validation"] = load_dataset(
             data_args.dataset_name,
             data_args.dataset_config_name,
-            cache_dir=tok_args.cache_dir,
-            use_auth_token=True if tok_args.use_auth_token else None,
-            streaming=data_args.streaming,
-            num_proc=data_args.preprocessing_num_workers,
-        )
-        if "validation" not in raw_datasets.keys() or not data_args.use_presplit_validation:
-            if data_args.streaming:
-                raise ValueError(
-                    "When using 'streaming=True' it is not possible to automatically generate a split from the"
-                    " training set. This is not supported by 'datasets'. Specify a validation set, disable"
-                    " streaming, or enable 'use_presplit_validation'")
-            raw_datasets["validation"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[:{data_args.validation_split_percentage}%]",
-                cache_dir=tok_args.cache_dir,
-                use_auth_token=True if tok_args.use_auth_token else None,
-                streaming=data_args.streaming,
-                num_proc=data_args.preprocessing_num_workers,
-            )
-            raw_datasets["train"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[{data_args.validation_split_percentage}%:]",
-                cache_dir=tok_args.cache_dir,
-                use_auth_token=True if tok_args.use_auth_token else None,
-                streaming=data_args.streaming,
-                num_proc=data_args.preprocessing_num_workers,
-            )
-    else:
-        data_files = {}
-        dataset_args = {}
-        if data_args.train_file is not None:
-            data_files["train"] = data_args.train_file
-        if data_args.validation_file is not None:
-            data_files["validation"] = data_args.validation_file
-        extension = (
-            data_args.train_file.split(".")[-1]
-            if data_args.train_file is not None
-            else data_args.validation_file.split(".")[-1]
-        )
-        if extension == "txt":
-            extension = "text"
-            dataset_args["keep_linebreaks"] = data_args.keep_linebreaks
-        raw_datasets = load_dataset(
-            extension,
-            data_files=data_files,
+            split=f"train[:{data_args.validation_split_percentage}%]",
             cache_dir=tok_args.cache_dir,
             use_auth_token=True if tok_args.use_auth_token else None,
             num_proc=data_args.preprocessing_num_workers,
-            **dataset_args,
         )
-        # If no validation data is there, validation_split_percentage will be used to divide the dataset.
-        if "validation" not in raw_datasets.keys() or not data_args.use_presplit_validation:
-            raw_datasets["validation"] = load_dataset(
-                extension,
-                data_files=data_files,
-                split=f"train[:{data_args.validation_split_percentage}%]",
-                cache_dir=tok_args.cache_dir,
-                use_auth_token=True if tok_args.use_auth_token else None,
-                num_proc=data_args.preprocessing_num_workers,
-                **dataset_args,
-            )
-            raw_datasets["train"] = load_dataset(
-                extension,
-                data_files=data_files,
-                split=f"train[{data_args.validation_split_percentage}%:]",
-                cache_dir=tok_args.cache_dir,
-                use_auth_token=True if tok_args.use_auth_token else None,
-                num_proc=data_args.preprocessing_num_workers,
-                **dataset_args,
-            )
+        raw_datasets["train"] = load_dataset(
+            data_args.dataset_name,
+            data_args.dataset_config_name,
+            split=f"train[{data_args.validation_split_percentage}%:]",
+            cache_dir=tok_args.cache_dir,
+            use_auth_token=True if tok_args.use_auth_token else None,
+            num_proc=data_args.preprocessing_num_workers,
+        )
 
     tokenizer_kwargs = {
         "cache_dir": tok_args.cache_dir,
@@ -218,37 +171,59 @@ def main():
     if getattr(tokenizer, "pad_token", None) is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    column_names = list(raw_datasets["train"].features)
-    text_column_name = "text" if "text" in column_names else column_names[0]
-
-    def tokenize(element):
-        outputs = tokenizer(
-            element[text_column_name],
-            truncation=True,
-            padding=False,
-            max_length=data_args.block_size,
-            return_overflowing_tokens=False,
-            return_length=False,
-        )
+    def tokenize(examples):
+        # Might throw warnings that thetext is too long
+        # but that is okay as we will chunk into smaller pieces later on
+        outputs = tokenizer(examples[data_args.text_column_name])
 
         return {"input_ids": outputs["input_ids"], "attention_mask": outputs["attention_mask"]}
 
     # Process datasets so that they are cached and we can use them later on in the training scripts
-    _ = raw_datasets["train"].map(
+    tokenized_datasets = raw_datasets.map(
         tokenize,
         batched=True,
         remove_columns=raw_datasets["train"].column_names,
         num_proc=data_args.preprocessing_num_workers,
         batch_size=data_args.batch_size,
+        desc="Running tokenizer on datasets",
+        keep_in_memory=True,
     )
-    if "validation" in raw_datasets:
-        _ = raw_datasets["validation"].map(
-            tokenize,
-            batched=True,
-            remove_columns=raw_datasets["train"].column_names,
-            num_proc=data_args.preprocessing_num_workers,
-            batch_size=data_args.batch_size,
-        )
+
+    # Taken from
+    # https://github.com/huggingface/transformers/blob/e75cb0cb3c5fef887abea6f099252e59a659af9d/examples/pytorch/language-modeling/run_clm.py#L490
+    def group_texts(examples):
+        # Concatenate all texts.
+        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        # We drop the small remainder, and if the total_length < block_size  we exclude this batch and return an empty dict.
+        # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
+        total_length = (total_length // data_args.block_size) * data_args.block_size
+        # Split by chunks of max_len.
+        result = {
+            k: [t[i: i + data_args.block_size] for i in range(0, total_length, data_args.block_size)]
+            for k, t in concatenated_examples.items()
+        }
+        result["labels"] = result["input_ids"].copy()
+        return result
+
+    logger.info("You can ignore the 'length is longer than...' errors because we will chunk the texts into"
+                " 'block_size' sized blocks later")
+    tokenized_datasets = tokenized_datasets.map(
+        group_texts,
+        batched=True,
+        num_proc=data_args.preprocessing_num_workers,
+        batch_size=data_args.batch_size,
+        desc=f"Grouping texts in chunks of {data_args.block_size}",
+        keep_in_memory=True,
+    )
+
+    dataset_name_cfg = f"{data_args.dataset_name.split('/')[-1]}--{data_args.dataset_config_name}"
+    output_dir = Path(data_args.output_dir) / f"{dataset_name_cfg}-{tok_args.tokenizer_name.split('/')[-1]}-{data_args.block_size}"
+    output_dir.mkdir(exist_ok=True, parents=True)
+    tokenized_datasets.save_to_disk(output_dir)
+
+    logger.info(f"Dataset saved to {str(output_dir)}")
+    logger.info(str(tokenized_datasets))
 
 
 if __name__ == "__main__":
