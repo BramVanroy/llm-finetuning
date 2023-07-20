@@ -1,11 +1,14 @@
+import math
 import logging
+import os
 import sys
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
 from typing import Optional
 
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset
+import psutil
 
 from transformers import (
     AutoTokenizer,
@@ -111,6 +114,16 @@ class DataTrainingArguments:
     seed: int = field(default=42, metadata={"help": "Random seed."})
 
 
+def convert_size(size_bytes):
+    if size_bytes == 0:
+        return "0B"
+    size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return f"{s} {size_name[i]}"
+
+
 def main():
     # See https://gist.github.com/BramVanroy/f78530673b1437ed0d6be7c61cdbdd7c
     parser = HfArgumentParser((TokenizerArguments, DataTrainingArguments))
@@ -123,6 +136,13 @@ def main():
         handlers=[logging.StreamHandler(sys.stdout)],
         level=logging.INFO
     )
+
+    mem = convert_size(psutil.virtual_memory().total)
+    cpu_cores = os.cpu_count()
+
+    logger.info(f"Running on {cpu_cores:,} CPU cores and {mem} memory")
+    logger.info(f"Running with batch size {data_args.batch_size:,}"
+                f" and {data_args.preprocessing_num_workers:,} workers")
 
     # Set seed before initializing model.
     set_seed(data_args.seed)
@@ -206,7 +226,7 @@ def main():
         result["labels"] = result["input_ids"].copy()
         return result
 
-    logger.info("You can ignore the 'length is longer than...' errors because we will chunk the texts into"
+    logger.info("You can ignore the 'length is longer than' errors because we will chunk the texts into"
                 " 'block_size' sized blocks later")
     proc_datasets = proc_datasets.map(
         group_texts,
