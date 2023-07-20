@@ -1,44 +1,22 @@
-#!/usr/bin/env python
-# coding=utf-8
-# Copyright 2020 The HuggingFace Inc. team. All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""
-Fine-tuning the library models for causal language modeling (GPT, GPT-2, CTRL, ...) on a text file or a dataset.
-
-Here is the full list of checkpoints on the hub that can be fine-tuned by this script:
-https://huggingface.co/models?filter=text-generation
-
-Adapted by Bram Vanroy to PEFT
-"""
 import dataclasses
 import json
-# You can also adapt this script on your own causal language modeling task. Pointers for this are left as comments.
-
 import logging
 import math
 import os
 import sys
+
 from dataclasses import dataclass, field
+from itertools import chain
 from pathlib import Path
 from typing import Optional
 
 import datasets
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, DatasetDict
 
 import transformers
-from peft import LoraConfig
+from filelock import FileLock
+from peft import LoraConfig, get_peft_model, prepare_model_for_int8_training, prepare_model_for_kbit_training
 from peft.utils import TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING
 from transformers import (
     CONFIG_MAPPING,
@@ -48,11 +26,11 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser,
     TrainingArguments,
-    set_seed, BitsAndBytesConfig, EarlyStoppingCallback,
+    set_seed, BitsAndBytesConfig, EarlyStoppingCallback, default_data_collator, Trainer,
 )
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils.versions import require_version
-from trl import SFTTrainer
+from trl.trainer.utils import PeftSavingCallback
 
 logger = logging.getLogger(__name__)
 
@@ -202,12 +180,20 @@ class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
-
+    preprocessed_dataset: Optional[str] = field(
+        default=None, metadata={"help": "Path to a dataset that has already been fully processed (not collated yet),"
+                                        " e.g. tokenized, grouped, etc. This should be a HF Dataset that has been saved"
+                                        " to disk and can be loaded with DatasetDict.load_from_disk"}
+    )
     dataset_name: Optional[str] = field(
         default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
+    )
+    text_column_name: Optional[str] = field(
+        default="text",
+        metadata={"help": "Text column to tokenize."}
     )
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
@@ -390,7 +376,11 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if data_args.dataset_name is not None:
+    process_data = True
+    if data_args.preprocessed_dataset is not None:
+        process_data = False
+        raw_datasets = DatasetDict.load_from_disk(data_args.preprocessed_dataset)
+    elif data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_dataset(
             data_args.dataset_name,
@@ -468,15 +458,8 @@ def main():
                 **dataset_args,
             )
 
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
-
-    # Load pretrained model and tokenizer
-    #
-    # Distributed training:
-    # The .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
-
+    logger.info(f"Loaded dataset!")
+    logger.info(str(raw_datasets))
     config_kwargs = {
         "cache_dir": model_args.cache_dir,
         "revision": model_args.model_revision,
@@ -545,7 +528,7 @@ def main():
     )
     model.config.use_cache = False
 
-    peft_config = None
+    callbacks = []
     if model_args.use_peft:
         try:
             target_modules = TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING[model.config.model_type]
@@ -568,41 +551,81 @@ def main():
         )
         logger.info(f"Targetting {target_modules} with LoRA.")
 
+        if getattr(model, "is_loaded_in_8bit", False) or getattr(model, "is_loaded_in_4bit", False):
+            model = prepare_model_for_kbit_training(model)
+
+        model = get_peft_model(model, peft_config)
+        callbacks.append(PeftSavingCallback)
+
     # We resize the embeddings only when necessary to avoid index errors. If you are creating a model from scratch
     # on a small vocab and want a smaller embedding size, remove this test.
     embedding_size = model.get_input_embeddings().weight.shape[0]
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
 
-    # Preprocessing the datasets.
-    # First we tokenize all the texts.
-    if training_args.do_train:
-        column_names = list(raw_datasets["train"].features)
-    else:
-        column_names = list(raw_datasets["validation"].features)
-    text_column_name = "text" if "text" in column_names else column_names[0]
+    if process_data:
+        def tokenize(examples):
+            # Might throw warnings that thetext is too long
+            # but that is okay as we will chunk into smaller pieces later on
+            outputs = tokenizer(examples[data_args.text_column_name])
+
+            return {"input_ids": outputs["input_ids"], "attention_mask": outputs["attention_mask"]}
+
+        # Process datasets so that they are cached and we can use them later on in the training scripts
+        raw_datasets = raw_datasets.map(
+            tokenize,
+            batched=True,
+            remove_columns=raw_datasets["train"].column_names,
+            num_proc=data_args.preprocessing_num_workers,
+            batch_size=data_args.batch_size,
+            desc="Running tokenizer on datasets",
+        )
+
+        # Taken from
+        # https://github.com/huggingface/transformers/blob/e75cb0cb3c5fef887abea6f099252e59a659af9d/examples/pytorch/language-modeling/run_clm.py#L490
+        def group_texts(examples):
+            # Concatenate all texts.
+            concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
+            total_length = len(concatenated_examples[list(examples.keys())[0]])
+            # We drop the small remainder, and if the total_length < block_size  we exclude this batch and return an empty dict.
+            # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
+            total_length = (total_length // data_args.block_size) * data_args.block_size
+            # Split by chunks of max_len.
+            result = {
+                k: [t[i: i + data_args.block_size] for i in range(0, total_length, data_args.block_size)]
+                for k, t in concatenated_examples.items()
+            }
+            result["labels"] = result["input_ids"].copy()
+            return result
+
+        logger.info("You can ignore the 'length is longer than...' errors because we will chunk the texts into"
+                    " 'block_size' sized blocks later")
+        raw_datasets = raw_datasets.map(
+            group_texts,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            batch_size=data_args.batch_size,
+            desc=f"Grouping texts in chunks of {data_args.block_size}",
+        )
 
     if training_args.do_train:
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")
+
         train_dataset = raw_datasets["train"]
         if data_args.max_train_samples is not None:
             max_train_samples = min(len(train_dataset), data_args.max_train_samples)
             train_dataset = train_dataset.select(range(max_train_samples))
 
-        logger.debug(f"Data train sample (cutoff): {train_dataset[text_column_name][0][:26]}")
-
     if training_args.do_eval:
         if "validation" not in raw_datasets:
             raise ValueError("--do_eval requires a validation dataset")
+
         eval_dataset = raw_datasets["validation"]
         if data_args.max_eval_samples is not None:
             max_eval_samples = min(len(eval_dataset), data_args.max_eval_samples)
             eval_dataset = eval_dataset.select(range(max_eval_samples))
 
-        logger.debug(f"Data eval sample (cutoff): {eval_dataset[text_column_name][0][:26]}")
-
-    callbacks = []
     if data_args.early_stopping_patience is not None and data_args.early_stopping_threshold is not None:
         callbacks.append(
             EarlyStoppingCallback(
@@ -621,23 +644,21 @@ def main():
         )
 
     # Initialize our Trainer
-    trainer = SFTTrainer(
+    trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
+        # Data collator will default to DataCollatorWithPadding, so we change it.
+        data_collator=default_data_collator,
         callbacks=callbacks,
-        peft_config=peft_config,
-        dataset_text_field=text_column_name,
-        max_seq_length=data_args.block_size,
-        dataset_num_proc=data_args.preprocessing_num_workers,
-        dataset_batch_size=data_args.dataset_batch_size,
     )
 
-    for name, module in trainer.model.named_modules():
-        if "norm" in name:
-            module = module.to(torch.float32)
+    if model_args.load_in_4bit:
+        for name, module in trainer.model.named_modules():
+            if "norm" in name:
+                module = module.to(torch.float32)
 
     # Training
     if training_args.do_train:
