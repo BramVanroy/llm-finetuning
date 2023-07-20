@@ -273,6 +273,11 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "Denote how much the evaluation metric must improve to satisfy early stopping conditions."},
     )
+    dataset_batch_size: int = field(
+        default=1000,
+        metadata={"help": "Number of examples per batch provided to function if batched=True. If batch_size <= 0 or "
+                          "batch_size == None, provide the full dataset as a single batch to function."},
+    )
     def __post_init__(self):
         if self.streaming:
             require_version("datasets>=2.0.0", "The streaming feature requires `datasets>=2.0.0`")
@@ -626,7 +631,8 @@ def main():
         peft_config=peft_config,
         dataset_text_field=text_column_name,
         max_seq_length=data_args.block_size,
-        num_proc=data_args.preprocessing_num_workers,
+        dataset_num_proc=data_args.preprocessing_num_workers,
+        dataset_batch_size=data_args.dataset_batch_size,
     )
 
     for name, module in trainer.model.named_modules():

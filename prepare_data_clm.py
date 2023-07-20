@@ -58,7 +58,6 @@ class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
-
     dataset_name: Optional[str] = field(
         default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
@@ -93,6 +92,11 @@ class DataTrainingArguments:
     preprocessing_num_workers: Optional[int] = field(
         default=None,
         metadata={"help": "The number of processes to use for the preprocessing."},
+    )
+    batch_size: int = field(
+        default=1000,
+        metadata={"help": "Number of examples per batch provided to function if batched=True. If batch_size <= 0 or "
+                          "batch_size == None, provide the full dataset as a single batch to function."},
     )
     use_presplit_validation: bool = field(
         default=True,
@@ -214,7 +218,6 @@ def main():
     if getattr(tokenizer, "pad_token", None) is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-
     column_names = list(raw_datasets["train"].features)
     text_column_name = "text" if "text" in column_names else column_names[0]
 
@@ -232,11 +235,19 @@ def main():
 
     # Process datasets so that they are cached and we can use them later on in the training scripts
     _ = raw_datasets["train"].map(
-        tokenize, batched=True, remove_columns=raw_datasets["train"].column_names, num_proc=data_args.preprocessing_num_workers
+        tokenize,
+        batched=True,
+        remove_columns=raw_datasets["train"].column_names,
+        num_proc=data_args.preprocessing_num_workers,
+        batch_size=data_args.batch_size,
     )
     if "validation" in raw_datasets:
         _ = raw_datasets["validation"].map(
-            tokenize, batched=True, remove_columns=raw_datasets["train"].column_names, num_proc=data_args.preprocessing_num_workers
+            tokenize,
+            batched=True,
+            remove_columns=raw_datasets["train"].column_names,
+            num_proc=data_args.preprocessing_num_workers,
+            batch_size=data_args.batch_size,
         )
 
 
