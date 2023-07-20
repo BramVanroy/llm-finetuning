@@ -625,7 +625,8 @@ def main():
         callbacks=callbacks,
         peft_config=peft_config,
         dataset_text_field=text_column_name,
-        max_seq_length=data_args.block_size
+        max_seq_length=data_args.block_size,
+        num_proc=data_args.preprocessing_num_workers,
     )
 
     for name, module in trainer.model.named_modules():
