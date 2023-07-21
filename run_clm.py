@@ -27,6 +27,7 @@ from transformers import (
     HfArgumentParser,
     TrainingArguments,
     set_seed, BitsAndBytesConfig, EarlyStoppingCallback, default_data_collator, Trainer,
+    DataCollatorForLanguageModeling,
 )
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils.versions import require_version
@@ -643,6 +644,7 @@ def main():
             " If none are given, early stopping will not be used."
         )
 
+    collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -651,7 +653,7 @@ def main():
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
         # Data collator will default to DataCollatorWithPadding, so we change it.
-        data_collator=default_data_collator,
+        data_collator=collator,
         callbacks=callbacks,
     )
 

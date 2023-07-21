@@ -212,19 +212,17 @@ def main():
     # Taken from
     # https://github.com/huggingface/transformers/blob/e75cb0cb3c5fef887abea6f099252e59a659af9d/examples/pytorch/language-modeling/run_clm.py#L490
     def group_texts(examples):
+        dkeys = list(examples.keys())
         # Concatenate all texts.
-        concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
-        total_length = len(concatenated_examples[list(examples.keys())[0]])
+        examples = {k: list(chain(*examples[k])) for k in dkeys}
         # We drop the small remainder, and if the total_length < block_size  we exclude this batch and return an empty dict.
-        # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
-        total_length = (total_length // data_args.block_size) * data_args.block_size
-        # Split by chunks of max_len.
-        result = {
+        total_length = (len(examples[dkeys[0]]) // data_args.block_size) * data_args.block_size
+        # Split by chunks of max_len, so return value will be a multidimensional tensor for input_ids and attention mask
+        # We do not add labels here but ise DataCollatorForLanguageModeling during training which automatically adds them
+        return {
             k: [t[i: i + data_args.block_size] for i in range(0, total_length, data_args.block_size)]
-            for k, t in concatenated_examples.items()
+            for k, t in examples.items()
         }
-        result["labels"] = result["input_ids"].copy()
-        return result
 
     logger.info("You can ignore the 'length is longer than' errors because we will chunk the texts into"
                 " 'block_size' sized blocks later")
@@ -248,4 +246,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
