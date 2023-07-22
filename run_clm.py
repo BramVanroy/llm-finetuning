@@ -535,6 +535,8 @@ def main():
             target_modules = TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING[model.config.model_type]
             if model.config.model_type in ["RefinedWebModel", "RefinedWeb", "falcon"]:
                 target_modules += ["dense", "dense_h_to_4h", "dense_4h_to_h"]
+            elif model.config.model_type == "llama":
+                target_modules += ["gate_proj", "up_proj", "down_proj"]
         except (KeyError, AttributeError):
             if model_args.model_type is not None:
                 target_modules = TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING[model_args.model_type]
