@@ -15,8 +15,7 @@ import torch
 from datasets import load_dataset, DatasetDict
 
 import transformers
-from filelock import FileLock
-from peft import LoraConfig, get_peft_model, prepare_model_for_int8_training, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from peft.utils import TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING
 from transformers import (
     CONFIG_MAPPING,
@@ -26,12 +25,16 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser,
     TrainingArguments,
-    set_seed, BitsAndBytesConfig, EarlyStoppingCallback, default_data_collator, Trainer,
+    set_seed, BitsAndBytesConfig, EarlyStoppingCallback, Trainer,
     DataCollatorForLanguageModeling,
 )
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils.versions import require_version
 from trl.trainer.utils import PeftSavingCallback
+
+sys.path.append(os.getcwd())  # noqa
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +78,6 @@ class ModelArguments:
     cache_dir: Optional[str] = field(
         default=None,
         metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
-    )
-    use_fast_tokenizer: bool = field(
-        default=True,
-        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
     model_revision: str = field(
         default="main",
@@ -169,11 +168,31 @@ class ModelArguments:
             )
         },
     )
-    use_nested_quant: Optional[bool] = field(
+    lora_target_linear: bool = field(
         default=False,
+        metadata={
+            "help": (
+                "The LoRA paper mentions that in addition to attention layers, Linear layers should also be targetted"
+                " to achieve the best results. This can lead to a big increase in trainable parameters, though, and"
+                " most of the time performance is also quite good if we only target attention layers. So enabling this"
+                " option may yield better performance but is bound to train (much) slower."
+            )
+        },
+    )
+    use_nested_quant: Optional[bool] = field(
+        default=True,
         metadata={"help": "Activate nested quantization for 4bit base models"},
     )
-    use_peft: Optional[bool] = field(default=False, metadata={"help": "Wether to use PEFT or not to train adapters"})
+    use_peft: bool = field(default=False, metadata={"help": "Wether to use PEFT or not to train adapters"})
+    use_flash_attention: bool = field(
+        default=True,
+        metadata={
+            "help": (
+                "Whether to use Flash Attention. This currently requires a GPU with compute capability of 8.0 or higher"
+                " (3090/A100 and up). The patch currently only works for Llama models"
+            )
+        },
+    )
 
 
 @dataclass
@@ -343,6 +362,15 @@ def main():
     transformers.utils.logging.enable_default_handler()
     transformers.utils.logging.enable_explicit_format()
 
+    if model_args.use_flash_attention:
+        if (gpu_capability := torch.cuda.get_device_capability()[0]) >= 8:
+            from patch_llama_flash_attn import replace_attn_with_flash_attn
+            replace_attn_with_flash_attn()
+        else:
+            logger.warning(f"Your GPU does not support Flash Attention. Requires at least capability 8.0. You have"
+                           f" {gpu_capability}.")
+            model_args.use_flash_attention = False
+
     # Log on each process the small summary:
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
@@ -498,6 +526,7 @@ def main():
 
     if getattr(tokenizer, "pad_token", None) is None:
         tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "right"
 
     compute_dtype = getattr(torch, model_args.bnb_4bit_compute_dtype)
 
@@ -528,15 +557,26 @@ def main():
         trust_remote_code=model_args.trust_remote_code,
     )
     model.config.use_cache = False
+    model.config.pretraining_tp = 1
+
+    if model_args.use_flash_attention:
+        from patch_llama_flash_attn import forward
+        if model.model.layers[0].self_attn.forward.__doc__ != forward.__doc__:
+            logger.error(f"Model is not using flash attention. Flash Attention currently only supported for LlamaModel."
+                         f" You are using {type(model)}.")
+            model_args.use_flash_attention = False
+        else:
+            logger.info("Successfully enabled Flash Attention!")
 
     callbacks = []
     if model_args.use_peft:
         try:
             target_modules = TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING[model.config.model_type]
-            if model.config.model_type in ["RefinedWebModel", "RefinedWeb", "falcon"]:
-                target_modules += ["dense", "dense_h_to_4h", "dense_4h_to_h"]
-            elif model.config.model_type == "llama":
-                target_modules += ["gate_proj", "up_proj", "down_proj"]
+            if model_args.lora_target_linear:
+                if model.config.model_type in ["RefinedWebModel", "RefinedWeb", "falcon"]:
+                    target_modules += ["dense", "dense_h_to_4h", "dense_4h_to_h"]
+                elif model.config.model_type == "llama":
+                    target_modules += ["gate_proj", "up_proj", "down_proj"]
         except (KeyError, AttributeError):
             if model_args.model_type is not None:
                 target_modules = TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING[model_args.model_type]
