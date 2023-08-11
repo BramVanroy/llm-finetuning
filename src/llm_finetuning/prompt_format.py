@@ -3,7 +3,6 @@ from functools import lru_cache
 from typing import Dict, List, Literal, Optional
 
 import numpy as np
-from transformers import AutoTokenizer
 
 
 # Inspired by https://huggingface.co/spaces/HuggingFaceH4/starchat-playground/blob/main/dialogues.py

@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools >= 40.6.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm_finetuning"
+version = "0.0.1"
+authors = [
+    {name = "Bram Vanroy", email = "bramvanroy@hotmail.com"},
+]
+maintainers = [
+    {name = "Bram Vanroy", email = "bramvanroy@hotmail.com"},
+]
+description = "Code used for CLM and instruction/chat finetuning."
+readme = "README.md"
+keywords = ["nlp", "lmm", "language-modeling", "llama"]
+license = {file = "LICENSE"}
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)"
+]
+
+requires-python = ">=3.11"
+dependencies = [
+    "accelerate",
+    "datasets",
+    "deepspeed",
+    "huggingface_hub",
+    "peft",
+    "optimum",
+    "scikit-learn",
+    "sentencepiece",
+    "torch",
+    "transformers",
+    "trl"
+]
+
+[project.urls]
+homepage = "https://github.com/BramVanroy/llm-finetuning"
+documentation = "https://github.com/BramVanroy/llm-finetuning"
+repository = "https://github.com/BramVanroy/llm-finetuning.git"
+changelog = "https://github.com/BramVanroy/llm-finetuning/blob/master/CHANGELOG.md"
+
+[project.optional-dependencies]
+dev = ["flake8", "black", "isort"]
+wandb = ["wandb"]
+convert = ["tensorflow", "flax", "jax", "jaxlib"]
+all = ["llm_finetuning[dev]", "llm_finetuning[wandb]", "llm_finetuning[convert]"]
+
+# TOOLS
+[tool.setuptools]
+include-package-data = true
+license-files = ['LICEN[CS]E*']
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 119
+target-version = ["py311"]
+
+[tool.isort]
+profile = "black"
+ensure_newline_before_comments = true
+line_length = 119
+default_section = "FIRSTPARTY"
+known_first_party = "llm_finetuning"
+lines_after_imports = 2
+
+# flake8 is in setup.cfg as it does not support toml:
+# https://github.com/PyCQA/flake8/issues/234

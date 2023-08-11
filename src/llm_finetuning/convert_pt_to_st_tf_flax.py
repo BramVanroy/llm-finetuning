@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional
 
-import torch
 from transformers import AutoModelForCausalLM, FlaxAutoModelForCausalLM, HfArgumentParser, TFAutoModelForCausalLM
 
 
@@ -21,25 +20,19 @@ assert script_args.model_name is not None, "please provide a directory that cont
 
 if script_args.convert_pt_safe:
     try:
-        pt_model = AutoModelForCausalLM.from_pretrained(
-            script_args.model_name, return_dict=True, torch_dtype=torch.bfloat16, trust_remote_code=True
-        )
+        pt_model = AutoModelForCausalLM.from_pretrained(script_args.model_name, trust_remote_code=True)
         pt_model.save_pretrained(script_args.model_name, safe_serialization=True)
     except Exception as exc:
         print(f"Failed converting to PyTorch safetensors, {exc}")
 
 try:
-    tf_model = TFAutoModelForCausalLM.from_pretrained(
-        script_args.model_name, return_dict=True, torch_dtype=torch.bfloat16, trust_remote_code=True, from_pt=True
-    )
+    tf_model = TFAutoModelForCausalLM.from_pretrained(script_args.model_name, trust_remote_code=True, from_pt=True)
     tf_model.save_pretrained(script_args.model_name, safe_serialization=True)
 except Exception as exc:
     print(f"Failed converting to Tensorflow, {exc}")
 
 try:
-    flax_model = FlaxAutoModelForCausalLM.from_pretrained(
-        script_args.model_name, return_dict=True, torch_dtype=torch.bfloat16, trust_remote_code=True, from_pt=True
-    )
+    flax_model = FlaxAutoModelForCausalLM.from_pretrained(script_args.model_name, trust_remote_code=True, from_pt=True)
     flax_model.save_pretrained(script_args.model_name, safe_serialization=True)
 except Exception as exc:
     print(f"Failed converting to Flax, {exc}")

@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from argparse import Namespace
-from typing import Dict, Literal, Union
+from typing import Dict, Union
 
 import numpy as np
 from datasets import DatasetDict
