@@ -1,5 +1,5 @@
-import math
 import logging
+import math
 import os
 import sys
 from dataclasses import dataclass, field
@@ -7,14 +7,10 @@ from itertools import chain
 from pathlib import Path
 from typing import Optional
 
-from datasets import load_dataset
 import psutil
+from datasets import load_dataset
+from transformers import AutoTokenizer, HfArgumentParser, set_seed
 
-from transformers import (
-    AutoTokenizer,
-    HfArgumentParser,
-    set_seed
-)
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +20,7 @@ class TokenizerArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune, or train from scratch.
     """
+
     tokenizer_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
@@ -63,20 +60,18 @@ class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
+
     output_dir: str = field(
-        metadata={"help": "The dataset will be saved under output directory so that it can be"
-                          " loaded directly from disk without relying on cache."}
+        metadata={
+            "help": "The dataset will be saved under output directory so that it can be"
+            " loaded directly from disk without relying on cache."
+        }
     )
-    dataset_name: str = field(
-        metadata={"help": "The name of the dataset to use (via the datasets library)."}
-    )
+    dataset_name: str = field(metadata={"help": "The name of the dataset to use (via the datasets library)."})
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
-    text_column_name: Optional[str] = field(
-        default="text",
-        metadata={"help": "Text column to tokenize."}
-    )
+    text_column_name: Optional[str] = field(default="text", metadata={"help": "Text column to tokenize."})
     block_size: Optional[int] = field(
         default=None,
         metadata={
@@ -102,14 +97,18 @@ class DataTrainingArguments:
     )
     batch_size: int = field(
         default=1000,
-        metadata={"help": "Number of examples per batch provided to function if batched=True. If batch_size <= 0 or "
-                          "batch_size == None, provide the full dataset as a single batch to function."},
+        metadata={
+            "help": "Number of examples per batch provided to function if batched=True. If batch_size <= 0 or "
+            "batch_size == None, provide the full dataset as a single batch to function."
+        },
     )
     use_presplit_validation: bool = field(
         default=True,
-        metadata={"help": "Whether to look for and use a 'validation' split in the given HF dataset. If"
-                          " disabled, will use 'validation_split_percentage' to turn a portion of"
-                          " the training set into a validation set"}
+        metadata={
+            "help": "Whether to look for and use a 'validation' split in the given HF dataset. If"
+            " disabled, will use 'validation_split_percentage' to turn a portion of"
+            " the training set into a validation set"
+        },
     )
     seed: int = field(default=42, metadata={"help": "Random seed."})
 
@@ -134,15 +133,16 @@ def main():
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
-        level=logging.INFO
+        level=logging.INFO,
     )
 
     mem = convert_size(psutil.virtual_memory().total)
     cpu_cores = os.cpu_count()
 
     logger.info(f"Running on {cpu_cores:,} CPU cores and {mem} memory")
-    logger.info(f"Running with batch size {data_args.batch_size:,}"
-                f" and {data_args.preprocessing_num_workers:,} workers")
+    logger.info(
+        f"Running with batch size {data_args.batch_size:,}" f" and {data_args.preprocessing_num_workers:,} workers"
+    )
 
     # Set seed before initializing model.
     set_seed(data_args.seed)
@@ -220,12 +220,14 @@ def main():
         # Split by chunks of max_len, so return value will be a multidimensional tensor for input_ids and attention mask
         # We do not add labels here but ise DataCollatorForLanguageModeling during training which automatically adds them
         return {
-            k: [t[i: i + data_args.block_size] for i in range(0, total_length, data_args.block_size)]
+            k: [t[i : i + data_args.block_size] for i in range(0, total_length, data_args.block_size)]
             for k, t in examples.items()
         }
 
-    logger.info("You can ignore the 'length is longer than' errors because we will chunk the texts into"
-                " 'block_size' sized blocks later")
+    logger.info(
+        "You can ignore the 'length is longer than' errors because we will chunk the texts into"
+        " 'block_size' sized blocks later"
+    )
     proc_datasets = proc_datasets.map(
         group_texts,
         batched=True,
@@ -236,7 +238,10 @@ def main():
     )
 
     dataset_name_cfg = f"{data_args.dataset_name.split('/')[-1]}--{data_args.dataset_config_name}"
-    output_dir = Path(data_args.output_dir) / f"{dataset_name_cfg}-{tok_args.tokenizer_name.split('/')[-1]}-{data_args.block_size}"
+    output_dir = (
+        Path(data_args.output_dir)
+        / f"{dataset_name_cfg}-{tok_args.tokenizer_name.split('/')[-1]}-{data_args.block_size}"
+    )
     output_dir.mkdir(exist_ok=True, parents=True)
     proc_datasets.save_to_disk(output_dir)
 

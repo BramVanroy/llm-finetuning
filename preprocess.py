@@ -1,13 +1,14 @@
 import logging
+import os
+import sys
 from argparse import Namespace
-from typing import Dict, Union, Literal
+from typing import Dict, Literal, Union
 
 import numpy as np
 from datasets import DatasetDict
-import sys
-import os
 
 from prompt_format import PromptFormatter
+
 
 sys.path.append(os.getcwd())  # noqa
 
@@ -42,7 +43,9 @@ def _check_if_response_in_prompt_ids(input_idxs: np.ndarray, response_idxs: np.n
     return False
 
 
-def _is_suitable_samples(sample, response_token_ids, prompt_formatter: PromptFormatter, tokenizer, max_seq_length: int):
+def _is_suitable_samples(
+    sample, response_token_ids, prompt_formatter: PromptFormatter, tokenizer, max_seq_length: int
+):
     """Find samples where, even after tokenization and truncation to the max seq length,
     the response prefix is still fully present."""
     # TODO: convert sample to messages to expected format of list of dicts where each dict has "role" and "content"
@@ -52,15 +55,20 @@ def _is_suitable_samples(sample, response_token_ids, prompt_formatter: PromptFor
     return _check_if_response_in_prompt_ids(input_ids, response_token_ids)
 
 
-def filter_on_prefix_present(datasets: Union[Dict, DatasetDict], prompt_formatter: PromptFormatter, tokenizer, data_args: Namespace):
+def filter_on_prefix_present(
+    datasets: Union[Dict, DatasetDict], prompt_formatter: PromptFormatter, tokenizer, data_args: Namespace
+):
     response_token_ids = prompt_formatter.assistant_token_ids(tokenizer)
-    datasets = datasets.filter(lambda sample: _is_suitable_samples(sample,
-                                                                   response_token_ids=response_token_ids,
-                                                                   prompt_formatter=prompt_formatter,
-                                                                   tokenizer=tokenizer,
-                                                                   max_seq_length=data_args.max_seq_length),
-                               num_proc=data_args.preprocessing_num_workers,
-                               )
+    datasets = datasets.filter(
+        lambda sample: _is_suitable_samples(
+            sample,
+            response_token_ids=response_token_ids,
+            prompt_formatter=prompt_formatter,
+            tokenizer=tokenizer,
+            max_seq_length=data_args.max_seq_length,
+        ),
+        num_proc=data_args.preprocessing_num_workers,
+    )
 
     return datasets
 

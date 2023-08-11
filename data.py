@@ -20,7 +20,8 @@ def build_data(data_args: Namespace, model_args: Namespace):
                 raise ValueError(
                     "When using 'streaming=True' it is not possible to automatically generate a split from the"
                     " training set. This is not supported by 'datasets'. Specify a validation set, disable"
-                    " streaming, or enable 'use_presplit_validation'")
+                    " streaming, or enable 'use_presplit_validation'"
+                )
             raw_datasets["validation"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,

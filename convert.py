@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
-from transformers import TFAutoModelForCausalLM, HfArgumentParser, FlaxAutoModelForCausalLM, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, FlaxAutoModelForCausalLM, HfArgumentParser, TFAutoModelForCausalLM
 
 
 @dataclass

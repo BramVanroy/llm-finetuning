@@ -1,4 +1,3 @@
-
 from typing import Literal
 
 from peft import LoraConfig
@@ -14,16 +13,17 @@ def _get_target_modules(lora_model_type: Literal["falcon"] = "falcon"):
             "dense_4h_to_h",
         ]
     else:
-        raise ValueError(f"Model type '{lora_model_type}' not found. Currently supported model_types are"
-                         f" 'falcon'.")
+        raise ValueError(
+            f"Model type '{lora_model_type}' not found. Currently supported model_types are" f" 'falcon'."
+        )
 
 
 def build_lora_config(
-        lora_model_type: Literal["falcon"] = "falcon",
-        lora_alpha: int = 8,
-        lora_dropout: float = 0.0,
-        lora_r: int = 8,
-        task_type: str = "CAUSAL_LM"
+    lora_model_type: Literal["falcon"] = "falcon",
+    lora_alpha: int = 8,
+    lora_dropout: float = 0.0,
+    lora_r: int = 8,
+    task_type: str = "CAUSAL_LM",
 ):
     target_modules = _get_target_modules(lora_model_type)
     return LoraConfig(

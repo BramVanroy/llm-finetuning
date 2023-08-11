@@ -4,7 +4,6 @@ import logging
 import math
 import os
 import sys
-
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
@@ -12,9 +11,8 @@ from typing import Optional
 
 import datasets
 import torch
-from datasets import load_dataset, DatasetDict
-
 import transformers
+from datasets import DatasetDict, load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from peft.utils import TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING
 from transformers import (
@@ -23,17 +21,20 @@ from transformers import (
     AutoConfig,
     AutoModelForCausalLM,
     AutoTokenizer,
-    HfArgumentParser,
-    TrainingArguments,
-    set_seed, BitsAndBytesConfig, EarlyStoppingCallback, Trainer,
+    BitsAndBytesConfig,
     DataCollatorForLanguageModeling,
+    EarlyStoppingCallback,
+    HfArgumentParser,
+    Trainer,
+    TrainingArguments,
+    set_seed,
 )
 from transformers.trainer_utils import get_last_checkpoint
 from transformers.utils.versions import require_version
 from trl.trainer.utils import PeftSavingCallback
 
-sys.path.append(os.getcwd())  # noqa
 
+sys.path.append(os.getcwd())  # noqa
 
 
 logger = logging.getLogger(__name__)
@@ -50,11 +51,7 @@ class ModelArguments:
     """
 
     model_name_or_path: str = field(
-        metadata={
-            "help": (
-                "The model checkpoint for weights initialization."
-            )
-        },
+        metadata={"help": ("The model checkpoint for weights initialization.")},
     )
     model_type: Optional[str] = field(
         default=None,
@@ -150,27 +147,15 @@ class ModelArguments:
     )
     lora_alpha: int = field(
         default=16,
-        metadata={
-            "help": (
-                "The alpha parameter for LoRA scaling"
-            )
-        },
+        metadata={"help": ("The alpha parameter for LoRA scaling")},
     )
     lora_dropout: float = field(
         default=0.1,
-        metadata={
-            "help": (
-                "The dropout probability for LoRA layers"
-            )
-        },
+        metadata={"help": ("The dropout probability for LoRA layers")},
     )
     lora_r: int = field(
         default=64,
-        metadata={
-            "help": (
-                "LoRA attention dimension"
-            )
-        },
+        metadata={"help": ("LoRA attention dimension")},
     )
     lora_target_linear: bool = field(
         default=False,
@@ -204,10 +189,14 @@ class DataTrainingArguments:
     """
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
+
     preprocessed_dataset: Optional[str] = field(
-        default=None, metadata={"help": "Path to a dataset that has already been fully processed (not collated yet),"
-                                        " e.g. tokenized, grouped, etc. This should be a HF Dataset that has been saved"
-                                        " to disk and can be loaded with DatasetDict.load_from_disk"}
+        default=None,
+        metadata={
+            "help": "Path to a dataset that has already been fully processed (not collated yet),"
+            " e.g. tokenized, grouped, etc. This should be a HF Dataset that has been saved"
+            " to disk and can be loaded with DatasetDict.load_from_disk"
+        },
     )
     dataset_name: Optional[str] = field(
         default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
@@ -215,10 +204,7 @@ class DataTrainingArguments:
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
-    text_column_name: Optional[str] = field(
-        default="text",
-        metadata={"help": "Text column to tokenize."}
-    )
+    text_column_name: Optional[str] = field(default="text", metadata={"help": "Text column to tokenize."})
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
@@ -268,9 +254,11 @@ class DataTrainingArguments:
     )
     use_presplit_validation: bool = field(
         default=True,
-        metadata={"help": "Whether to look for and use a 'validation' split in the given HF dataset. If"
-                          " disabled, will use 'validation_split_percentage' to turn a portion of"
-                          " the training set into a validation set"}
+        metadata={
+            "help": "Whether to look for and use a 'validation' split in the given HF dataset. If"
+            " disabled, will use 'validation_split_percentage' to turn a portion of"
+            " the training set into a validation set"
+        },
     )
     early_stopping_patience: Optional[int] = field(
         default=None,
@@ -285,9 +273,12 @@ class DataTrainingArguments:
     )
     dataset_batch_size: int = field(
         default=1000,
-        metadata={"help": "Number of examples per batch provided to function if batched=True. If batch_size <= 0 or "
-                          "batch_size == None, provide the full dataset as a single batch to function."},
+        metadata={
+            "help": "Number of examples per batch provided to function if batched=True. If batch_size <= 0 or "
+            "batch_size == None, provide the full dataset as a single batch to function."
+        },
     )
+
     def __post_init__(self):
         if self.streaming:
             require_version("datasets>=2.0.0", "The streaming feature requires `datasets>=2.0.0`")
@@ -309,15 +300,17 @@ def main():
         raw_config_json = json.loads(Path(config_file).read_text(encoding="utf-8"))
 
         config_arg_idx = sys.argv.index(config_file)
-        other_args = sys.argv[config_arg_idx + 1:]
+        other_args = sys.argv[config_arg_idx + 1 :]
         arg_names = {arg[2:] for arg in other_args if arg.startswith("--")}
 
         if "run_name" in arg_names or "run_name" in raw_config_json:
             run_name_specified = True
 
-        required_args = [(act.option_strings[0], "dummy")
-                         for act in parser._actions
-                         if act.required and not any(act_s[2:] in arg_names for act_s in act.option_strings)]
+        required_args = [
+            (act.option_strings[0], "dummy")
+            for act in parser._actions
+            if act.required and not any(act_s[2:] in arg_names for act_s in act.option_strings)
+        ]
         required_args = [arg for req_dummy_args in required_args for arg in req_dummy_args]  # Flatten
 
         cli_args = other_args + required_args
@@ -344,9 +337,11 @@ def main():
         training_args.run_name = training_args.output_dir
 
     if training_args.do_eval and data_args.streaming and not data_args.use_presplit_validation:
-        raise ValueError("When using 'streaming=True' it is not possible to automatically generate a split from the"
-                         " training set. This is not supported by 'datasets'. Specify a validation set, disable"
-                         " streaming, or enable 'use_presplit_validation'")
+        raise ValueError(
+            "When using 'streaming=True' it is not possible to automatically generate a split from the"
+            " training set. This is not supported by 'datasets'. Specify a validation set, disable"
+            " streaming, or enable 'use_presplit_validation'"
+        )
 
     # Setup logging
     logging.basicConfig(
@@ -369,10 +364,13 @@ def main():
     if model_args.use_flash_attention:
         if (gpu_capability := torch.cuda.get_device_capability()[0]) >= 8:
             from patch_llama_flash_attn import replace_attn_with_flash_attn
+
             replace_attn_with_flash_attn()
         else:
-            logger.warning(f"Your GPU does not support Flash Attention. Requires at least capability 8.0. You have"
-                           f" {gpu_capability}.")
+            logger.warning(
+                f"Your GPU does not support Flash Attention. Requires at least capability 8.0. You have"
+                f" {gpu_capability}."
+            )
             model_args.use_flash_attention = False
 
     # Log on each process the small summary:
@@ -428,7 +426,8 @@ def main():
                 raise ValueError(
                     "When using 'streaming=True' it is not possible to automatically generate a split from the"
                     " training set. This is not supported by 'datasets'. Specify a validation set, disable"
-                    " streaming, or enable 'use_presplit_validation'")
+                    " streaming, or enable 'use_presplit_validation'"
+                )
             raw_datasets["validation"] = load_dataset(
                 data_args.dataset_name,
                 data_args.dataset_config_name,
@@ -544,9 +543,7 @@ def main():
         )
 
     torch_dtype = (
-        model_args.torch_dtype
-        if model_args.torch_dtype in ["auto", None]
-        else getattr(torch, model_args.torch_dtype)
+        model_args.torch_dtype if model_args.torch_dtype in ["auto", None] else getattr(torch, model_args.torch_dtype)
     )
     model = AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
@@ -565,9 +562,12 @@ def main():
 
     if model_args.use_flash_attention:
         from patch_llama_flash_attn import forward
+
         if model.model.layers[0].self_attn.forward.__doc__ != forward.__doc__:
-            logger.error(f"Model is not using flash attention. Flash Attention currently only supported for LlamaModel."
-                         f" You are using {type(model)}.")
+            logger.error(
+                f"Model is not using flash attention. Flash Attention currently only supported for LlamaModel."
+                f" You are using {type(model)}."
+            )
             model_args.use_flash_attention = False
         else:
             logger.info("Successfully enabled Flash Attention!")
@@ -585,8 +585,10 @@ def main():
             if model_args.model_type is not None:
                 target_modules = TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING[model_args.model_type]
             else:
-                raise KeyError("Cannot automatically derive model type. Specify '--model_type' explicitly."
-                               " See https://github.com/huggingface/peft/blob/e06d94ddeb6c70913593740618df76908b918d66/src/peft/utils/other.py#L262")
+                raise KeyError(
+                    "Cannot automatically derive model type. Specify '--model_type' explicitly."
+                    " See https://github.com/huggingface/peft/blob/e06d94ddeb6c70913593740618df76908b918d66/src/peft/utils/other.py#L262"
+                )
 
         peft_config = LoraConfig(
             lora_alpha=model_args.lora_alpha,
@@ -611,6 +613,7 @@ def main():
         model.resize_token_embeddings(len(tokenizer))
 
     if process_data:
+
         def tokenize(examples):
             # Might throw warnings that thetext is too long
             # but that is okay as we will chunk into smaller pieces later on
@@ -639,14 +642,16 @@ def main():
             total_length = (total_length // data_args.block_size) * data_args.block_size
             # Split by chunks of max_len.
             result = {
-                k: [t[i: i + data_args.block_size] for i in range(0, total_length, data_args.block_size)]
+                k: [t[i : i + data_args.block_size] for i in range(0, total_length, data_args.block_size)]
                 for k, t in concatenated_examples.items()
             }
             result["labels"] = result["input_ids"].copy()
             return result
 
-        logger.info("You can ignore the 'length is longer than...' errors because we will chunk the texts into"
-                    " 'block_size' sized blocks later")
+        logger.info(
+            "You can ignore the 'length is longer than...' errors because we will chunk the texts into"
+            " 'block_size' sized blocks later"
+        )
         raw_datasets = raw_datasets.map(
             group_texts,
             batched=True,
@@ -680,10 +685,12 @@ def main():
                 early_stopping_threshold=data_args.early_stopping_threshold,
             )
         )
-        logger.info(f"Early stopping enabled (patience: {data_args.early_stopping_patience};"
-                    f" threshold: {data_args.early_stopping_threshold})!")
+        logger.info(
+            f"Early stopping enabled (patience: {data_args.early_stopping_patience};"
+            f" threshold: {data_args.early_stopping_threshold})!"
+        )
     elif (data_args.early_stopping_patience is None or data_args.early_stopping_threshold is None) and not (
-            data_args.early_stopping_patience is None and data_args.early_stopping_threshold is None
+        data_args.early_stopping_patience is None and data_args.early_stopping_threshold is None
     ):
         raise ValueError(
             "Both 'early_stopping_patience' and 'early_stopping_threshold' must be given, or none of them."

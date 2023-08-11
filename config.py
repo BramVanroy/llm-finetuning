@@ -1,14 +1,13 @@
 import logging
 from argparse import Namespace
 
-from transformers import AutoConfig, CONFIG_MAPPING
+from transformers import CONFIG_MAPPING, AutoConfig
+
 
 logger = logging.getLogger(__name__)
 
 
-def build_config(
-        model_args: Namespace
-):
+def build_config(model_args: Namespace):
     config_kwargs = {
         "cache_dir": model_args.cache_dir,
         "revision": model_args.model_revision,

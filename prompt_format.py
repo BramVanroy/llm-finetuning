@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Literal, List, Dict, Optional
+from typing import Dict, List, Literal, Optional
 
 import numpy as np
 from transformers import AutoTokenizer
@@ -35,15 +35,10 @@ class PromptFormatter:
 
     @lru_cache
     def assistant_token_ids(self, tokenizer, return_tensors="np"):
-        return tokenizer(self.assistant_token,
-                         add_special_tokens=False,
-                         return_tensors=return_tensors).input_ids[0]
+        return tokenizer(self.assistant_token, add_special_tokens=False, return_tensors=return_tensors).input_ids[0]
 
     def is_sample_suitable(
-            self,
-            tokenizer,
-            messages: List[Dict[Literal["role", "content"], str]],
-            max_length: Optional[int] = None
+        self, tokenizer, messages: List[Dict[Literal["role", "content"], str]], max_length: Optional[int] = None
     ) -> bool:
         """Check whether a sample is suitable for training. That means, whether it contains an assistant message
         prompt (tokens) AND whether those tokens are not the last ones of the prompt
@@ -63,18 +58,18 @@ class PromptFormatter:
 
 @dataclass(eq=True, frozen=True)
 class AlpacaPromptFormatter(PromptFormatter):
-    system_message: str = "Hieronder staat een instructie `Instruction` die een taak beschrijft, gecombineerd met een" \
-                          " invoer `Input` die verdere context biedt. Schrijf een antwoord na `Response:` dat het" \
-                          " verzoek op de juiste manier voltooit of beantwoordt."
+    system_message: str = (
+        "Hieronder staat een instructie `Instruction` die een taak beschrijft, gecombineerd met een"
+        " invoer `Input` die verdere context biedt. Schrijf een antwoord na `Response:` dat het"
+        " verzoek op de juiste manier voltooit of beantwoordt."
+    )
     system_token: str = ""
     user_token: str = "### Instruction:"
     input_token: str = "### Input:"
     assistant_token: str = "### Response:"
 
 
-PROMPT_FORMATTERS = {
-    "alpaca": AlpacaPromptFormatter
-}
+PROMPT_FORMATTERS = {"alpaca": AlpacaPromptFormatter}
 
 
 def get_prompt_formatter(name: Literal["alpaca"], **kwargs):

@@ -23,7 +23,6 @@ Adapted by Bram Vanroy for LLM finetuning on instructions
 """
 import dataclasses
 import json
-
 import logging
 import re
 import sys
@@ -36,6 +35,7 @@ from transformers.utils import is_peft_available
 from trl.trainer.utils import PeftSavingCallback
 
 from collator import DataCollatorForTurnBasedLM
+
 
 # Setup logging
 logging.basicConfig(
@@ -50,34 +50,37 @@ import os
 from functools import partial
 from pathlib import Path
 
+
 sys.path.append(os.getcwd())  # noqa
 
-from data import build_data
-from hyperopt_args import HyperOptArguments
-from lora_config import build_lora_config
-from preprocess import formatting_prompts_func, filter_on_prefix_present, maybe_undersample_datasets
-from prompt_format import get_prompt_formatter
-
-from config import build_config
-from model import build_model
-from tokenizer import build_tokenizer
-
-from data_args import DataTrainingArguments
-from model_args import ModelArguments
-from trainer import SFTTrainer
-
-import torch
 import datasets
-
+import torch
 import transformers
+from hyperopt_args import HyperOptArguments
 from transformers import (
+    AutoModelForCausalLM,
     EarlyStoppingCallback,
     HfArgumentParser,
+    PreTrainedModel,
+    Trainer,
     TrainingArguments,
-    set_seed, default_data_collator, Trainer, is_torch_tpu_available, PreTrainedModel, AutoModelForCausalLM
+    default_data_collator,
+    is_torch_tpu_available,
+    set_seed,
 )
-
 from transformers.trainer_utils import get_last_checkpoint
+
+from config import build_config
+from data import build_data
+from data_args import DataTrainingArguments
+from lora_config import build_lora_config
+from model import build_model
+from model_args import ModelArguments
+from preprocess import filter_on_prefix_present, formatting_prompts_func, maybe_undersample_datasets
+from prompt_format import get_prompt_formatter
+from tokenizer import build_tokenizer
+from trainer import SFTTrainer
+
 
 logger = logging.getLogger(__name__)
 
@@ -98,15 +101,17 @@ def main():
         raw_config_json = json.loads(Path(config_file).read_text(encoding="utf-8"))
 
         config_arg_idx = sys.argv.index(config_file)
-        other_args = sys.argv[config_arg_idx + 1:]
+        other_args = sys.argv[config_arg_idx + 1 :]
         arg_names = {arg[2:] for arg in other_args if arg.startswith("--")}
 
         if "run_name" in arg_names or "run_name" in raw_config_json:
             run_name_specified = True
 
-        required_args = [(act.option_strings[0], "dummy")
-                         for act in parser._actions
-                         if act.required and not any(act_s[2:] in arg_names for act_s in act.option_strings)]
+        required_args = [
+            (act.option_strings[0], "dummy")
+            for act in parser._actions
+            if act.required and not any(act_s[2:] in arg_names for act_s in act.option_strings)
+        ]
         required_args = [arg for req_dummy_args in required_args for arg in req_dummy_args]  # Flatten
 
         cli_args = other_args + required_args
@@ -133,9 +138,11 @@ def main():
         training_args.run_name = training_args.output_dir
 
     if training_args.do_eval and data_args.streaming and not data_args.use_presplit_validation:
-        raise ValueError("When using 'streaming=True' it is not possible to automatically generate a split from the"
-                         " training set. This is not supported by 'datasets'. Specify a validation set, disable"
-                         " streaming, or enable 'use_presplit_validation'")
+        raise ValueError(
+            "When using 'streaming=True' it is not possible to automatically generate a split from the"
+            " training set. This is not supported by 'datasets'. Specify a validation set, disable"
+            " streaming, or enable 'use_presplit_validation'"
+        )
 
     if training_args.should_log:
         # The default of training_args.log_level is passive, so we set log level at info here to have that default.
@@ -179,12 +186,16 @@ def main():
     tokenizer = build_tokenizer(model_args)
     model = build_model(config, tokenizer, model_args)
 
-    peft_config = build_lora_config(
-        model_args.lora_model_type,
-        lora_alpha=model_args.lora_alpha,
-        lora_dropout=model_args.lora_dropout,
-        lora_r=model_args.lora_r
-    ) if model_args.lora_model_type != "none" else None
+    peft_config = (
+        build_lora_config(
+            model_args.lora_model_type,
+            lora_alpha=model_args.lora_alpha,
+            lora_dropout=model_args.lora_dropout,
+            lora_r=model_args.lora_r,
+        )
+        if model_args.lora_model_type != "none"
+        else None
+    )
 
     callbacks = []
     if is_peft_available() and peft_config is not None:
@@ -275,7 +286,7 @@ def main():
             total_length = (total_length // block_size) * block_size
             # Split by chunks of max_len.
             result = {
-                k: [t[i: i + block_size] for i in range(0, total_length, block_size)]
+                k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
                 for k, t in concatenated_examples.items()
             }
             result["labels"] = result["input_ids"].copy()
@@ -307,10 +318,12 @@ def main():
     if training_args.do_train and train_dataset is None:
         raise ValueError("--do_train requires a train dataset")
     elif training_args.do_eval and eval_dataset is None:
-        raise ValueError("--do_eval requires a validation dataset. If your dataset does"
-                         " not have a dedicate validation set, and you did not specify an explicit"
-                         " validation_file, and you also did not specify --do_train (so that a portion of"
-                         " the training set could be used) then this error may occur.")
+        raise ValueError(
+            "--do_eval requires a validation dataset. If your dataset does"
+            " not have a dedicate validation set, and you did not specify an explicit"
+            " validation_file, and you also did not specify --do_train (so that a portion of"
+            " the training set could be used) then this error may occur."
+        )
 
     # If you want to use early stopping, both arguments have to be specified. Throw error if just one is specified.
     if hyperopt_args.early_stopping_patience is not None and hyperopt_args.early_stopping_threshold is not None:
@@ -320,10 +333,12 @@ def main():
                 early_stopping_threshold=hyperopt_args.early_stopping_threshold,
             )
         )
-        logger.info(f"Early stopping enabled (patience: {hyperopt_args.early_stopping_patience};"
-                    f" threshold: {hyperopt_args.early_stopping_threshold})!")
+        logger.info(
+            f"Early stopping enabled (patience: {hyperopt_args.early_stopping_patience};"
+            f" threshold: {hyperopt_args.early_stopping_threshold})!"
+        )
     elif (hyperopt_args.early_stopping_patience is None or hyperopt_args.early_stopping_threshold is None) and not (
-            hyperopt_args.early_stopping_patience is None and hyperopt_args.early_stopping_threshold is None
+        hyperopt_args.early_stopping_patience is None and hyperopt_args.early_stopping_threshold is None
     ):
         raise ValueError(
             "Both 'early_stopping_patience' and 'early_stopping_threshold' must be given, or none of them."
@@ -348,10 +363,9 @@ def main():
         return metric.compute(predictions=preds, references=labels)
 
     if model_args.task == "instruct":
-        collator = DataCollatorForTurnBasedLM(prompt_formatter.user_token,
-                                              prompt_formatter.assistant_token,
-                                              tokenizer=tokenizer,
-                                              mlm=False)
+        collator = DataCollatorForTurnBasedLM(
+            prompt_formatter.user_token, prompt_formatter.assistant_token, tokenizer=tokenizer, mlm=False
+        )
         trainer = SFTTrainer(
             model=model,
             args=training_args,

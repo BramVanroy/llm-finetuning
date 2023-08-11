@@ -1,14 +1,14 @@
+import warnings
 from typing import Optional, Tuple
 
 import torch
-import warnings
 import transformers
 from transformers.models.llama.modeling_llama import apply_rotary_pos_emb
 
 
 try:
+    from flash_attn.bert_padding import pad_input, unpad_input
     from flash_attn.flash_attn_interface import flash_attn_varlen_qkvpacked_func
-    from flash_attn.bert_padding import unpad_input, pad_input
 except Exception:
     raise ModuleNotFoundError(
         "Please install FlashAttention first, e.g., with pip install flash-attn --no-build-isolation, Learn more at https://github.com/Dao-AILab/flash-attention#installation-and-features"
@@ -18,6 +18,7 @@ try:
     from einops import rearrange
 except Exception:
     raise ModuleNotFoundError("Please install einops first, e.g., with pip install einops")
+
 
 # TAKEN from https://github.com/philschmid/deep-learning-pytorch-huggingface/blob/main/training/utils/llama_patch.py
 # which ADAPTED from https://github.com/allenai/open-instruct/blob/main/open_instruct/llama_flash_attn_monkey_patch.py
@@ -123,6 +124,7 @@ def replace_attn_with_flash_attn():
 
 def unplace_flash_attn_with_attn():
     import importlib
+
     import transformers
 
     print("Reloading llama model, unpatching flash attention")

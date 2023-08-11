@@ -1,5 +1,6 @@
-from typing import Optional, List
-from datasets import load_dataset, concatenate_datasets
+from typing import List, Optional
+
+from datasets import concatenate_datasets, load_dataset
 
 
 def merge(datasets: List[str], cols: List[str], repo_id: str, seed: Optional[int] = None):
@@ -8,9 +9,7 @@ def merge(datasets: List[str], cols: List[str], repo_id: str, seed: Optional[int
     # Map of dataset_idx to a dictionary that contains a mapping between its column names and its "new" column names
     # which are the column names of the first item
     col_map = {
-        ds_idx: {
-            col.split(",")[ds_idx]: first_cols[col_idx] for col_idx, col in enumerate(cols)
-        }
+        ds_idx: {col.split(",")[ds_idx]: first_cols[col_idx] for col_idx, col in enumerate(cols)}
         for ds_idx in range(num_datasets)
     }
 
@@ -20,7 +19,7 @@ def merge(datasets: List[str], cols: List[str], repo_id: str, seed: Optional[int
         print(ds_name, ds)
         ds = ds.add_column("dataset_source", [ds_name] * len(ds))
         ds = ds.rename_columns(col_map[ds_idx])
-        ds = ds.select_columns(first_cols+["dataset_source"])
+        ds = ds.select_columns(first_cols + ["dataset_source"])
         updated_datasets.append(ds)
 
     merged_ds = concatenate_datasets(updated_datasets)
@@ -33,10 +32,17 @@ def merge(datasets: List[str], cols: List[str], repo_id: str, seed: Optional[int
 
 def main():
     import argparse
-    cparser = argparse.ArgumentParser(description="Merge given datasets. Only merges the training set and discards the rest")
+
+    cparser = argparse.ArgumentParser(
+        description="Merge given datasets. Only merges the training set and discards the rest"
+    )
     cparser.add_argument("--datasets", help="datasets to merge, must be available on the HF hub", nargs="+")
-    cparser.add_argument("--cols", help="a list of a comma-separated items of columns to merge across the datasets."
-                                        " E.g., 'ds1_col1,ds2_column1 ds1_col2,ds2_column'", nargs="+")
+    cparser.add_argument(
+        "--cols",
+        help="a list of a comma-separated items of columns to merge across the datasets."
+        " E.g., 'ds1_col1,ds2_column1 ds1_col2,ds2_column'",
+        nargs="+",
+    )
     cparser.add_argument("--repo_id", help="repo_id of the Hugging Face repository where to upload the data to")
     cargs = cparser.parse_args()
     merge(**vars(cargs))

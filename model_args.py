@@ -1,7 +1,8 @@
-from dataclasses import field, dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from transformers import MODEL_FOR_CAUSAL_LM_MAPPING
+
 
 MODEL_CONFIG_CLASSES = list(MODEL_FOR_CAUSAL_LM_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
@@ -12,6 +13,7 @@ class ModelArguments:
     """
     Arguments pertaining to which model/config/tokenizer we are going to fine-tune, or train from scratch.
     """
+
     model_name_or_path: Optional[str] = field(
         default=None,
         metadata={
@@ -81,11 +83,7 @@ class ModelArguments:
     )
     load_in_8bit: bool = field(
         default=False,
-        metadata={
-            "help": (
-                "This flag is used to enable 8-bit quantization with LLM.int8()"
-            )
-        },
+        metadata={"help": ("This flag is used to enable 8-bit quantization with LLM.int8()")},
     )
     load_in_4bit: bool = field(
         default=False,
@@ -123,42 +121,26 @@ class ModelArguments:
     lora_model_type: Optional[str] = field(
         default="falcon",
         metadata={
-            "help": (
-                "The model type, used to figure out which modules to target with LoRA."
-            ),
+            "help": ("The model type, used to figure out which modules to target with LoRA."),
             "choices": ["falcon", "none"],
         },
     )
     lora_alpha: int = field(
         default=16,
-        metadata={
-            "help": (
-                "The alpha parameter for LoRA scaling"
-            )
-        },
+        metadata={"help": ("The alpha parameter for LoRA scaling")},
     )
     lora_dropout: float = field(
         default=0.1,
-        metadata={
-            "help": (
-                "The dropout probability for LoRA layers"
-            )
-        },
+        metadata={"help": ("The dropout probability for LoRA layers")},
     )
     lora_r: int = field(
         default=64,
-        metadata={
-            "help": (
-                "LoRA attention dimension"
-            )
-        },
+        metadata={"help": ("LoRA attention dimension")},
     )
     task: str = field(
         default="instruct",
         metadata={
-            "help": (
-                "Which to task to train on"
-            ),
+            "help": ("Which to task to train on"),
             "choices": ["clm", "instruct"],
         },
     )

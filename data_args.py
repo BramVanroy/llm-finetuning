@@ -1,4 +1,4 @@
-from dataclasses import field, dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from transformers.utils.versions import require_version
@@ -61,9 +61,11 @@ class DataTrainingArguments:
     )
     use_presplit_validation: bool = field(
         default=True,
-        metadata={"help": "Whether to look for and use a 'validation' split in the given HF dataset. If"
-                          " disabled, will use 'validation_split_percentage' to turn a portion of"
-                          " the training set into a validation set"}
+        metadata={
+            "help": "Whether to look for and use a 'validation' split in the given HF dataset. If"
+            " disabled, will use 'validation_split_percentage' to turn a portion of"
+            " the training set into a validation set"
+        },
     )
     preprocessing_num_workers: Optional[int] = field(
         default=None,
@@ -74,18 +76,12 @@ class DataTrainingArguments:
     )
     max_seq_length: Optional[int] = field(
         default=512,
-        metadata={
-            "help": (
-                "Maximal length for sequences before they are truncated when instruct tuning."
-            )
-        },
+        metadata={"help": ("Maximal length for sequences before they are truncated when instruct tuning.")},
     )
     template_name: Optional[str] = field(
         default="alpaca",
         metadata={
-            "help": (
-                "Prompting template to use (cf. `prompt_formatter`)."
-            ),
+            "help": ("Prompting template to use (cf. `prompt_formatter`)."),
             "choices": ["alpaca"],
         },
     )

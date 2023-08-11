@@ -4,6 +4,7 @@ from argparse import Namespace
 import torch
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,7 +34,7 @@ def build_model(config, tokenizer, model_args: Namespace, **kwargs):
             torch_dtype=torch_dtype,
             low_cpu_mem_usage=model_args.low_cpu_mem_usage,
             quantization_config=bnb_config,
-            trust_remote_code=model_args.trust_remote_code
+            trust_remote_code=model_args.trust_remote_code,
         )
     else:
         model = AutoModelForCausalLM.from_config(config)

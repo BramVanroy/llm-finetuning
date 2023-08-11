@@ -11,6 +11,11 @@ wandb/
 hub_models/
 hostfile
 .deepspeed_env
+generate_dummy.py
+inference-testing.ipynb
+test_output/
+todo.md
+
 
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio, WebStorm and Rider
 # Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
