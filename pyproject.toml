@@ -29,6 +29,7 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     "accelerate",
+    "bitsandbytes",
     "datasets",
     "deepspeed",
     "huggingface_hub",

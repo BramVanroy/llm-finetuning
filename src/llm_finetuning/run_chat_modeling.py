@@ -1,3 +1,9 @@
+"""Script to finetune CLM models on chat data. The dataset is expected to containg a column "dialog" that contains a list
+of turns (similar to Llama 2's expected format. See https://huggingface.co/datasets/BramVanroy/dutch_chat_datasets
+for an example.
+
+Note that the default system prompt is in Dutch. You may need to adapt for your use case.
+"""
 import dataclasses
 import json
 import logging
@@ -5,14 +11,14 @@ import math
 import os
 import sys
 from dataclasses import dataclass, field
-from itertools import chain
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional, Union
 
 import datasets
+import numpy as np
 import torch
 import transformers
-from datasets import DatasetDict, load_dataset
+from datasets import Dataset, DatasetDict, load_dataset
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 from peft.utils import TRANSFORMERS_MODELS_TO_LORA_TARGET_MODULES_MAPPING
 from transformers import (
@@ -89,6 +95,10 @@ class ModelArguments:
                 "with private models)."
             )
         },
+    )
+    max_length: Optional[int] = field(
+        default=None,
+        metadata={"help": ("Max. sequence length. Data will be truncated up to this length.")},
     )
     torch_dtype: Optional[str] = field(
         default=None,
@@ -188,21 +198,13 @@ class DataTrainingArguments:
     Arguments pertaining to what data we are going to input our model for training and eval.
     """
 
-    preprocessed_dataset: Optional[str] = field(
-        default=None,
-        metadata={
-            "help": "Path to a dataset that has already been fully processed (not collated yet),"
-            " e.g. tokenized, grouped, etc. This should be a HF Dataset that has been saved"
-            " to disk and can be loaded with DatasetDict.load_from_disk"
-        },
-    )
     dataset_name: Optional[str] = field(
         default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
-    text_column_name: Optional[str] = field(default="text", metadata={"help": "Text column to tokenize."})
+    dialog_column_name: Optional[str] = field(default="dialog", metadata={"help": "Column that contains dialogs."})
     train_file: Optional[str] = field(default=None, metadata={"help": "The input training data file (a text file)."})
     validation_file: Optional[str] = field(
         default=None,
@@ -227,16 +229,7 @@ class DataTrainingArguments:
         },
     )
     streaming: bool = field(default=False, metadata={"help": "Enable streaming mode"})
-    block_size: Optional[int] = field(
-        default=None,
-        metadata={
-            "help": (
-                "Optional input sequence length after tokenization. "
-                "The training dataset will be truncated in block of this size for training. "
-                "Default to the model max input length for single sentence inputs (take into account special tokens)."
-            )
-        },
-    )
+
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
     )
@@ -276,10 +269,82 @@ class DataTrainingArguments:
             "batch_size == None, provide the full dataset as a single batch to function."
         },
     )
+    system_prompt: str = field(
+        default="Je bent een behulpzame, respectvolle en eerlijke assistent. Antwoord altijd zo behulpzaam mogelijk. Je antwoorden mogen geen schadelijke, onethische, racistische, seksistische, gevaarlijke of illegale inhoud bevatten. Zorg ervoor dat je antwoorden sociaal onbevooroordeeld en positief van aard zijn.\n\nAls een vraag nergens op slaat of feitelijk niet coherent is, leg dan uit waarom in plaats van iets niet correct te antwoorden. Als je het antwoord op een vraag niet weet, deel dan geen onjuiste informatie.",
+        metadata={"help": "System prompt to use for training"},
+    )
 
     def __post_init__(self):
         if self.streaming:
             require_version("datasets>=2.0.0", "The streaming feature requires `datasets>=2.0.0`")
+
+
+class DataCollatorForLlamaChatCompletion(DataCollatorForLanguageModeling):
+    def __init__(
+        self,
+        *args,
+        mlm: bool = False,
+        ignore_index: int = -100,
+        **kwargs,
+    ):
+        super().__init__(*args, mlm=mlm, **kwargs)
+        self.ignore_index = ignore_index
+        self.start_idxs = self.tokenizer("[/INST]", add_special_tokens=False, return_tensors="pt")[
+            "input_ids"
+        ].squeeze()
+
+    def torch_call(self, examples: List[Union[List[int], Any, Dict[str, Any]]]) -> Dict[str, Any]:
+        batch = super().torch_call(examples)
+
+        idxs_to_keep = torch.ones(batch["labels"].size(0), dtype=torch.bool)
+        for idx in range(len(examples)):
+            sequence = batch["labels"][idx]
+
+            # The collator has turned all `pad_token_id` to -100 but if the model did not have a pad_token
+            # we probably set pad_token==eos_token, so now eos_tokens are also incorrectly ignored
+            if self.tokenizer.pad_token_id == self.tokenizer.eos_token_id:
+                last_non_eos = np.where(sequence != -100)[0][-1]
+                eos_idxs = np.where(sequence == -100)[0]
+                # Reset the -100's that the default collator has given, back to
+                # the EOS ID so that the model learns to predict it correctly
+                non_pad_eos = eos_idxs[eos_idxs <= last_non_eos + 1]
+                sequence[non_pad_eos] = self.tokenizer.eos_token_id
+                # Make sure the attention is set correctly for non-padding EOS
+                if "attention_mask" in batch:
+                    batch["attention_mask"][idx][non_pad_eos] = 1
+
+            start_idxs = []
+            for start_idx in np.where(sequence == self.start_idxs[0])[0]:
+                if torch.equal(self.start_idxs, sequence[start_idx : start_idx + self.start_idxs.size(0)]):
+                    start_idxs.append(start_idx + self.start_idxs.size(0))
+
+            # +1 so we also include the EOS token for the model to predict
+            end_idxs = (np.where(sequence == self.tokenizer.eos_token_id)[0] + 1).tolist()
+
+            if len(start_idxs) != len(end_idxs):
+                idxs_to_keep[idx] = False
+
+                logger.warning(
+                    "Malformed input. Expected that the EOS token occurred the same number of times as `[/INST]`. This"
+                    f" error may occur when your regular text has tokens that look like the special EOS token"
+                    f" {self.tokenizer.eos_token}, or when parts of the original data were truncated due to the given"
+                    f" max_length. Skipping this sequence."
+                )
+                continue
+
+            # Mask everything that is NOT between [/INST] and EOS tokens
+            mask = torch.ones_like(sequence, dtype=torch.bool)
+            for start, end in zip(start_idxs, end_idxs):
+                mask[start:end] = False
+            batch["labels"][idx][mask] = self.ignore_index
+
+        # Remove items with invalid prompts (cf. warning above)
+        batch = {k: v[idxs_to_keep] for k, v in batch.items()}
+        num_fails = (~idxs_to_keep).to(torch.int32).sum().item()
+        if num_fails:
+            logger.warning(f"Failed {num_fails} times. See above.")
+
+        return batch
 
 
 def main():
@@ -366,7 +431,7 @@ def main():
             replace_attn_with_flash_attn()
         else:
             logger.warning(
-                f"Your GPU does not support Flash Attention. Requires at least capability 8.0. You have"
+                "Your GPU does not support Flash Attention. Requires at least capability 8.0. You have"
                 f" {gpu_capability}."
             )
             model_args.use_flash_attention = False
@@ -405,11 +470,7 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    process_data = True
-    if data_args.preprocessed_dataset is not None:
-        process_data = False
-        raw_datasets = DatasetDict.load_from_disk(data_args.preprocessed_dataset)
-    elif data_args.dataset_name is not None:
+    if data_args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_dataset(
             data_args.dataset_name,
@@ -610,53 +671,129 @@ def main():
     if len(tokenizer) > embedding_size:
         model.resize_token_embeddings(len(tokenizer))
 
-    if process_data:
+    max_length = model_args.max_length if model_args.max_length else tokenizer.model_max_length
 
-        def tokenize(examples):
-            # Might throw warnings that thetext is too long
-            # but that is okay as we will chunk into smaller pieces later on
-            outputs = tokenizer(examples[data_args.text_column_name])
+    def promptify_sample(
+        tokenizer, dialog: list[dict[str, str]], system_prompt: str, column_name: str = "text"
+    ) -> Dict[str, str]:
+        text = f"{tokenizer.bos_token}[INST] "
+        if system_prompt:
+            text += f"<<SYS>>\n{system_prompt}\n<</SYS>>\n\n"
 
-            return {"input_ids": outputs["input_ids"], "attention_mask": outputs["attention_mask"]}
+        for turn_idx, turn in enumerate(dialog):
+            if turn["role"] == "user":
+                if turn_idx > 0:
+                    text += f"{tokenizer.bos_token}[INST] "
+                text += f'{turn["content"]} [/INST]'
+            else:
+                text += f' {turn["content"]} {tokenizer.eos_token}'
 
-        # Process datasets so that they are cached and we can use them later on in the training scripts
-        raw_datasets = raw_datasets.map(
-            tokenize,
-            batched=True,
-            remove_columns=raw_datasets["train"].column_names,
-            num_proc=data_args.preprocessing_num_workers,
-            batch_size=data_args.dataset_batch_size,
-            desc="Running tokenizer on datasets",
+        return {column_name: text}
+
+    def tokenize(examples):
+        outputs = tokenizer(
+            examples["text"],
+            truncation=True,
+            max_length=max_length,
+            add_special_tokens=False,
         )
+        return {"input_ids": outputs["input_ids"], "attention_mask": outputs["attention_mask"]}
 
-        # Taken from
-        # https://github.com/huggingface/transformers/blob/e75cb0cb3c5fef887abea6f099252e59a659af9d/examples/pytorch/language-modeling/run_clm.py#L490
-        def group_texts(examples):
-            # Concatenate all texts.
-            concatenated_examples = {k: list(chain(*examples[k])) for k in examples.keys()}
-            total_length = len(concatenated_examples[list(examples.keys())[0]])
-            # We drop the small remainder, and if the total_length < block_size  we exclude this batch and return an empty dict.
-            # We could add padding if the model supported it instead of this drop, you can customize this part to your needs.
-            total_length = (total_length // data_args.block_size) * data_args.block_size
-            # Split by chunks of max_len.
-            result = {
-                k: [t[i : i + data_args.block_size] for i in range(0, total_length, data_args.block_size)]
-                for k, t in concatenated_examples.items()
+    # Merge samples BUT make sure that conversations are never split so that the model better learns document-level
+    # conversational features for consistency. So we basically try to merge the largest to the smallest samples
+    # and if they're smaller than max_length, we try to add more, and so on.
+    non_sys_prompt_ds = raw_datasets.map(
+        lambda s: promptify_sample(tokenizer, s["dialog"], system_prompt=None, column_name="no_sys_text"),
+        num_proc=data_args.preprocessing_num_workers,
+        desc="Running prompter for building efficient batches",
+    )
+    non_sys_prompt_ds = non_sys_prompt_ds.map(
+        lambda batch: {
+            "input_lengths": [
+                len(inputs)
+                for inputs in tokenizer(
+                    batch["no_sys_text"],
+                    truncation=True,
+                    max_length=max_length,
+                    add_special_tokens=False,
+                )["input_ids"]
+            ]
+        },
+        batched=True,
+        num_proc=data_args.preprocessing_num_workers,
+        batch_size=data_args.dataset_batch_size,
+        desc="Running tokenizer for building efficient batches",
+    )
+
+    sys_prompt_size = len(tokenizer(f"<<SYS>>\n{data_args.system_prompt}\n<</SYS>>\n\n")["input_ids"])
+    logging.info(f"System prompt length (after tokenization): {sys_prompt_size}")
+
+    non_sys_prompt_ds = non_sys_prompt_ds.sort("input_lengths", reverse=True)
+
+    split_batch_idxs = {}
+    # For each split, collect sub-batches that can be merged so that their combined length is still
+    # smaller than max_length. We do this by sorting the dataset by tokenized length (above)
+    # and then trying to combine the largest and smallest items iteratively
+    for splitname, splitds in non_sys_prompt_ds.items():
+        lengths = splitds["input_lengths"]
+        last_idx = len(splitds["input_lengths"]) - 1
+        split_batch_idxs[splitname] = []
+        for first_idx in range(len(lengths)):
+            large_length = lengths[first_idx]
+            batch = [(first_idx, large_length)]
+            total_length = lengths[last_idx] + large_length + sys_prompt_size
+            while total_length <= max_length:
+                batch.append((last_idx, lengths[last_idx]))
+                last_idx -= 1
+                total_length += lengths[last_idx]
+
+                if first_idx >= last_idx:
+                    break
+
+            split_batch_idxs[splitname].append(batch)
+            if first_idx >= last_idx:
+                break
+
+    all_ids = []
+    raw_datasets = {}
+    for splitname, batches in split_batch_idxs.items():
+        logging.info(f"Dataset {splitname} size (no. orig. samples)", len(non_sys_prompt_ds[splitname]))
+        logging.info(f"Dataset {splitname} size after merging up to max_length", len(batches))
+        merged_dataset = []
+        for batch in batches:
+            total_batch_length = sum([x[1] for x in batch])
+            assert total_batch_length <= max_length
+            batch_ids = [x[0] for x in batch]
+            # Merge and flatten batch
+            batch_data = {
+                "dialog": [d for dialog in non_sys_prompt_ds[splitname].select(batch_ids)["dialog"] for d in dialog]
             }
-            result["labels"] = result["input_ids"].copy()
-            return result
+            merged_dataset.append(batch_data)
+            all_ids.extend(batch_ids)
 
-        logger.info(
-            "You can ignore the 'length is longer than...' errors because we will chunk the texts into"
-            " 'block_size' sized blocks later"
-        )
-        raw_datasets = raw_datasets.map(
-            group_texts,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            batch_size=data_args.dataset_batch_size,
-            desc=f"Grouping texts in chunks of {data_args.block_size}",
-        )
+        raw_datasets[splitname] = Dataset.from_list(merged_dataset)
+
+    assert not set(range(len(non_sys_prompt_ds))).difference(all_ids)
+
+    raw_datasets = DatasetDict(raw_datasets)
+
+    # Now that that's done, we can start processing the merged datasets (prompting+tokenizing)
+    raw_datasets = raw_datasets.map(
+        lambda s: promptify_sample(tokenizer, s[data_args.dialog_column_name], system_prompt=data_args.system_prompt),
+        batched=False,
+        remove_columns=raw_datasets["train"].column_names,
+        num_proc=data_args.preprocessing_num_workers,
+        desc="Converting dataset into prompts",
+    )
+
+    raw_datasets = raw_datasets.map(
+        tokenize,
+        batched=True,
+        remove_columns=raw_datasets["train"].column_names,
+        num_proc=data_args.preprocessing_num_workers,
+        batch_size=data_args.dataset_batch_size,
+        desc="Running tokenizer on datasets",
+    )
 
     if training_args.do_train:
         if "train" not in raw_datasets:
@@ -695,7 +832,7 @@ def main():
             " If none are given, early stopping will not be used."
         )
 
-    collator = DataCollatorForLanguageModeling(tokenizer, mlm=False)
+    collator = DataCollatorForLlamaChatCompletion(tokenizer)
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
@@ -703,7 +840,6 @@ def main():
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
-        # Data collator will default to DataCollatorWithPadding, so we change it.
         data_collator=collator,
         callbacks=callbacks,
     )

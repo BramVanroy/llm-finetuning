@@ -1,6 +1,5 @@
 """Taken from https://github.com/lvwerra/trl/blob/main/examples/stack_llama/scripts/merge_peft_adapter.py"""
 from dataclasses import dataclass, field
-from typing import Optional
 
 import torch
 from peft import PeftConfig, PeftModel
@@ -9,20 +8,13 @@ from transformers import AutoModelForCausalLM, AutoModelForSequenceClassificatio
 
 @dataclass
 class ScriptArguments:
-    """
-    The name of the Casual LM model we wish to fine with PPO
-    """
-
-    adapter_model_name: Optional[str] = field(default=None, metadata={"help": "the model name"})
-    base_model_name: Optional[str] = field(default=None, metadata={"help": "the model name"})
-    output_name: Optional[str] = field(default=None, metadata={"help": "the model name"})
+    adapter_model_name: str = field(metadata={"help": "the location of the adapters"})
+    base_model_name: str = field(metadata={"help": "the base model name to merge with"})
+    output_name: str = field(metadata={"help": "where to save the output model"})
 
 
 parser = HfArgumentParser(ScriptArguments)
 script_args = parser.parse_args_into_dataclasses()[0]
-assert script_args.adapter_model_name is not None, "please provide the name of the Adapter you would like to merge"
-assert script_args.base_model_name is not None, "please provide the name of the Base model"
-assert script_args.base_model_name is not None, "please provide the output name of the merged model"
 
 peft_config = PeftConfig.from_pretrained(script_args.adapter_model_name)
 if peft_config.task_type == "SEQ_CLS":
@@ -45,4 +37,3 @@ model = model.merge_and_unload()
 
 model.save_pretrained(f"{script_args.output_name}", safe_serialization=True)
 tokenizer.save_pretrained(f"{script_args.output_name}")
-# model.push_to_hub(f"{script_args.output_name}", use_temp_dir=False)

@@ -49,7 +49,8 @@ class TokenizerArguments:
         default=False,
         metadata={
             "help": (
-                "Whether to trust the code that may be downloaded alongside some models. This may be necessary to run models like Falcon who are not fully integrated in `transformers` yet."
+                "Whether to trust the code that may be downloaded alongside some models. This may be necessary to run"
+                " models like Falcon who are not fully integrated in `transformers` yet."
             )
         },
     )
