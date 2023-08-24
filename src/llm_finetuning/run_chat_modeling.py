@@ -285,10 +285,12 @@ class DataCollatorForLlamaChatCompletion(DataCollatorForLanguageModeling):
         *args,
         mlm: bool = False,
         ignore_index: int = -100,
+        skip_mismatched_sequences: bool = False,
         **kwargs,
     ):
         super().__init__(*args, mlm=mlm, **kwargs)
         self.ignore_index = ignore_index
+        self.skip_mismatched_sequences = skip_mismatched_sequences
         self.start_idxs = self.tokenizer("[/INST]", add_special_tokens=False, return_tensors="pt")[
             "input_ids"
         ].squeeze()
@@ -300,7 +302,7 @@ class DataCollatorForLlamaChatCompletion(DataCollatorForLanguageModeling):
         for idx in range(len(examples)):
             sequence = batch["labels"][idx]
 
-            # The collator has turned all `pad_token_id` to -100 but if the model did not have a pad_token
+            # The super() collator has turned all `pad_token_id` to -100 but if the model did not have a pad_token
             # we probably set pad_token==eos_token, so now eos_tokens are also incorrectly ignored
             if self.tokenizer.pad_token_id == self.tokenizer.eos_token_id:
                 last_non_eos = np.where(sequence != -100)[0][-1]
@@ -322,15 +324,15 @@ class DataCollatorForLlamaChatCompletion(DataCollatorForLanguageModeling):
             end_idxs = (np.where(sequence == self.tokenizer.eos_token_id)[0] + 1).tolist()
 
             if len(start_idxs) != len(end_idxs):
-                idxs_to_keep[idx] = False
-
                 logger.warning(
-                    "Malformed input. Expected that the EOS token occurred the same number of times as `[/INST]`. This"
-                    f" error may occur when your regular text has tokens that look like the special EOS token"
-                    f" {self.tokenizer.eos_token}, or when parts of the original data were truncated due to the given"
-                    f" max_length. Skipping this sequence."
+                    f"Malformed input. Expected that the EOS token ({len(end_idxs)}) occurred the same number of times"
+                    f" as `[/INST]` ({len(start_idxs)}). This error may occur when your regular text has tokens that"
+                    f" look like the special EOS token {self.tokenizer.eos_token}, or when parts of the original data"
+                    f" were truncated due to the given max_length."
                 )
-                continue
+                if self.skip_mismatched_sequences:
+                    idxs_to_keep[idx] = False
+                    continue
 
             # Mask everything that is NOT between [/INST] and EOS tokens
             mask = torch.ones_like(sequence, dtype=torch.bool)
@@ -342,7 +344,7 @@ class DataCollatorForLlamaChatCompletion(DataCollatorForLanguageModeling):
         batch = {k: v[idxs_to_keep] for k, v in batch.items()}
         num_fails = (~idxs_to_keep).to(torch.int32).sum().item()
         if num_fails:
-            logger.warning(f"Failed {num_fails} times. See above.")
+            logger.warning(f"Failed {num_fails} times. Current batch size: {len(batch['labels'])}. See above.")
 
         return batch
 
@@ -588,7 +590,7 @@ def main():
 
     if getattr(tokenizer, "pad_token", None) is None:
         tokenizer.pad_token = tokenizer.eos_token
-        tokenizer.padding_side = "right"
+    tokenizer.padding_side = "right"
 
     compute_dtype = getattr(torch, model_args.bnb_4bit_compute_dtype)
 
